@@ -6,8 +6,8 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# from gservices.drive.drive_service import DriveService
 # from gservices.gmail.gmail_service import GmailService
+from gservices.drive.drive_service import DriveService
 from gservices.sheets.sheets_service import SheetsService
 from gservices.oauth2_scopes import OAuth2Scope
 
@@ -15,8 +15,8 @@ from gservices.oauth2_scopes import OAuth2Scope
 class GoogleService:
     def __init__(self, credentials: Credentials):
         self._credentials = credentials
-        # self._drive_service: DriveService | None = None
         # self._gmail_service: GmailService | None = None
+        self._drive_service: DriveService | None = None
         self._sheets_service: SheetsService | None = None
 
     @staticmethod
@@ -97,11 +97,11 @@ class GoogleService:
             self._sheets_service = SheetsService.build(self._credentials)
         return self._sheets_service
 
-    # @property
-    # def Drive(self) -> DriveService:
-    #     if self._drive_service is None:
-    #         self._drive_service = DriveService.build(self._credentials)
-    #     return self._drive_service
+    @property
+    def Drive(self) -> DriveService:
+        if self._drive_service is None:
+            self._drive_service = DriveService.build(self._credentials)
+        return self._drive_service
 
     # @property
     # def Gmail(self) -> GmailService:

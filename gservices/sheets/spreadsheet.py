@@ -3,6 +3,7 @@ import time
 from typing import TYPE_CHECKING, Any, Sequence
 from rich.console import Console
 
+from gservices.drive.spreadsheet_file import SpreadsheetFile
 from gservices.sheets.cell_format import CellFormat
 from gservices.sheets.sheet import Sheet
 from gservices.sheets.utils import (
@@ -142,6 +143,12 @@ class Spreadsheet:
         The default format for all cells in the spreadsheet. This field is read-only.
         """
         return CellFormat(self._properties.get("defaultFormat", {}), cell=None)
+
+    @property
+    def file(self) -> SpreadsheetFile:
+        file = self._service._google.Drive.get(id=self.id)
+        assert isinstance(file, SpreadsheetFile)
+        return file
 
     def print(self):
         print = Console().print

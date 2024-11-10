@@ -1,19 +1,19 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from gservices.sheets.spreadsheet import Spreadsheet
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.resources as gr  # type: ignore[reportMissingModuleSource]
     from google.oauth2.credentials import Credentials
+    from gservices.google_services import GoogleServices
 
 
 class SheetsService:
     @staticmethod
-    def build(credentials: Credentials) -> SheetsService:
+    def build(credentials: Credentials, google: GoogleServices) -> SheetsService:
         from googleapiclient.discovery import build  # type: ignore
 
         resource = build("sheets", "v4", credentials=credentials)
-        return SheetsService(resource)
+        return SheetsService(resource, google)
 
     def open(
         self,
@@ -38,9 +38,13 @@ class SheetsService:
     # Private
     # ----------------------------------------------------------------------------------
 
-    def __init__(self, resource: gr.SheetsResource):
+    def __init__(self, resource: gr.SheetsResource, google: GoogleServices):
         self._resource = resource
+        self._google = google
 
     @property
     def resource(self) -> gr.SheetsResource:
         return self._resource
+
+
+from gservices.sheets.spreadsheet import Spreadsheet

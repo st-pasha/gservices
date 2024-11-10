@@ -11,8 +11,14 @@ ADDRESS_PATTERN = re.compile(r"^([A-Z]+)(\d+)$")
 
 def coords_to_address(row: int, col: int) -> str:
     """
-    The address of a cell in Excel notation, such as "B102".
+    Converts the address of a cell from [row]/[col] coordinates to excel
+    letter+number notation.
+
+    For example:
+        coords_to_address(1, 101) == "B102"
     """
+    if row < 0 or col < 0:
+        raise ValueError(f"Invalid cell coordinates: ({row}, {col})")
     addr = str(row + 1)
     i = col + 1
     while i:
@@ -22,9 +28,16 @@ def coords_to_address(row: int, col: int) -> str:
 
 
 def address_to_coords(addr: str) -> tuple[int, int]:
+    """
+    Converts the address of a cell from excel notation to a row/column pair,
+    where both row and column are 0-based integers.
+
+    For example:
+        address_to_coords("B102") == (1, 101)
+    """
     match = re.match(ADDRESS_PATTERN, addr)
     if not match:
-        raise ValueError(f"Invalid cell address: {addr}")
+        raise ValueError(f"Invalid cell address: {addr!r}")
     row = int(match.group(2))
     col = 0
     for ch in match.group(1):

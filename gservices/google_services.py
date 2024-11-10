@@ -12,7 +12,7 @@ from gservices.sheets.sheets_service import SheetsService
 from gservices.oauth2_scopes import OAuth2Scope
 
 
-class GoogleService:
+class GoogleServices:
     def __init__(self, credentials: Credentials):
         self._credentials = credentials
         self._drive_service: DriveService | None = None
@@ -25,7 +25,7 @@ class GoogleService:
         credentials: dict[str, Any] | None = None,
         scopes: Sequence[OAuth2Scope] | None = None,
         log: _Logger | None = None,
-    ) -> GoogleService:
+    ) -> GoogleServices:
         """
         Initialize Google API Service, using an existing [token] or obtaining
         the token data from [credentials].
@@ -89,7 +89,7 @@ class GoogleService:
             token.clear()
             token.update(json.loads(creds.to_json()))
 
-        return GoogleService(creds)
+        return GoogleServices(creds)
 
     @property
     def Drive(self) -> DriveService:
@@ -106,7 +106,7 @@ class GoogleService:
     @property
     def Sheets(self) -> SheetsService:
         if self._sheets_service is None:
-            self._sheets_service = SheetsService.build(self._credentials)
+            self._sheets_service = SheetsService.build(self._credentials, self)
         return self._sheets_service
 
 

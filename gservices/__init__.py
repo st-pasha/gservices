@@ -1,5 +1,5 @@
 from __future__ import annotations
-from gservices.google_service import GoogleService
+from gservices.google_services import GoogleServices
 
 
-__all__ = ["GoogleService"]
+__all__ = ["GoogleServices"]

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,7 +14,7 @@ class Path:
         self._has_tail = has_tail
 
     @staticmethod
-    def from_string(path: str, drive: "DriveService") -> "Path":
+    def from_string(path: str, drive: DriveService) -> Path:
         if path == "~":
             return drive.user_drive.path
         if path == "." or path == "":
@@ -49,7 +50,7 @@ class Path:
         return len(self._parts) == 1
 
     @property
-    def parent(self) -> "Path":
+    def parent(self) -> Path:
         return Path(self._parts[:-1])
 
     @property
@@ -60,7 +61,7 @@ class Path:
     def has_tail(self) -> bool:
         return self._has_tail
 
-    def __truediv__(self, other: str) -> "Path":
+    def __truediv__(self, other: str) -> Path:
         if other == "..":
             return self.parent
         return Path(tuple([*self._parts, other]))

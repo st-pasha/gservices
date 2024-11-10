@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, cast
 
 from googleapiclient.discovery import build  # type: ignore
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 
 
 class DriveService:
-    def __init__(self, resource: "g.DriveResource"):
+    def __init__(self, resource: g.DriveResource):
         self._resource = resource
         self._ids: dict[str, File] = {}
         self._paths: dict[Path, File] = {}
@@ -25,7 +26,7 @@ class DriveService:
         self._user_drive: UserDrive = root.user_drive
 
     @staticmethod
-    def build(credentials: "Credentials") -> "DriveService":
+    def build(credentials: Credentials) -> DriveService:
         resource = build("drive", "v3", credentials=credentials)
         return DriveService(resource)
 

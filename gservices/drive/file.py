@@ -1,3 +1,5 @@
+from __future__ import annotations
+import datetime as dt
 from typing import TYPE_CHECKING, cast
 
 from gservices.drive.path import Path
@@ -11,7 +13,7 @@ if TYPE_CHECKING:
 class File:
     FIELDS = "id,name,mimeType,parents,shortcutDetails,contentRestrictions"
 
-    def __init__(self, data: "g.File", drive: "DriveService"):
+    def __init__(self, data: g.File, drive: DriveService):
         self._data = data
         self._drive = drive
         self._path: Path | None = None
@@ -19,7 +21,7 @@ class File:
         self._shared_drive_id: str | None = None
 
     @staticmethod
-    def resolve_from_mime(data: "g.File", service: "DriveService") -> "File":
+    def resolve_from_mime(data: g.File, service: DriveService) -> File:
         mime_type = data.get("mimeType", "")
         if mime_type == Folder.MIME:
             cls = Folder
@@ -32,6 +34,10 @@ class File:
         else:
             cls = File
         return cls(data, service)
+
+    # ----------------------------------------------------------------------------------
+    # Properties
+    # ----------------------------------------------------------------------------------
 
     @property
     def id(self) -> str:
@@ -52,7 +58,7 @@ class File:
         return self._path
 
     @property
-    def parent(self) -> "Folder":
+    def parent(self) -> Folder:
         if self._parent is None:
             if "parents" in self._data:
                 parent_id = self._data["parents"][0]
@@ -92,6 +98,81 @@ class File:
         if self._shared_drive_id is None:
             self._shared_drive_id = self.parent.shared_drive_id
         return self._shared_drive_id
+
+    # ----------------------------------------------------------------------------------
+    # Extended properties
+    # ----------------------------------------------------------------------------------
+
+    @property
+    def size(self) -> int:
+        """
+        Size in bytes of blobs and first party editor files. Will be 0 for files
+        that have no size, like shortcuts and folders.
+        """
+        self._ensure_all_properties_loaded()
+        return int(self._data.get("size", 0))
+
+    @property
+    def created_time(self) -> dt.datetime:
+        """The time at which the file was created (RFC 3339 date-time)."""
+        self._ensure_all_properties_loaded()
+        timestamp = self._data.get("createdTime", "")
+        return dt.datetime.fromisoformat(timestamp)
+
+    @property
+    def modified_time(self) -> dt.datetime:
+        """The last time the file was modified by anyone (RFC 3339 date-time)."""
+        self._ensure_all_properties_loaded()
+        timestamp = self._data.get("modifiedTime", "")
+        return dt.datetime.fromisoformat(timestamp)
+
+    @property
+    def starred(self) -> bool:
+        """Whether the user has starred the file."""
+        self._ensure_all_properties_loaded()
+        return self._data.get("starred", False)
+
+    @property
+    def trashed(self) -> bool:
+        """
+        Whether the file has been trashed, either explicitly or from a trashed
+        parent folder. Only the owner may trash a file, and other users cannot
+        see files in the owner's trash.
+        """
+        self._ensure_all_properties_loaded()
+        return self._data.get("trashed", False)
+
+    @property
+    def explicitly_trashed(self) -> bool:
+        """
+        Whether the file has been explicitly trashed, as opposed to recursively
+        trashed from a parent folder.
+        """
+        self._ensure_all_properties_loaded()
+        return self._data.get("explicitlyTrashed", False)
+
+    @property
+    def version(self) -> int:
+        """
+        A monotonically increasing version number for the file. This reflects
+        every change made to the file on the server, even those not visible to
+        the user.
+        """
+        self._ensure_all_properties_loaded()
+        return int(self._data.get("version", 0))
+
+    def _ensure_all_properties_loaded(self):
+        if "size" not in self._data:
+            new_data = (
+                self._drive.resource.files()
+                .get(fileId=self.id, fields="*", supportsAllDrives=True)
+                .execute()
+            )
+            self._data = new_data
+
+    # ----------------------------------------------------------------------------------
+    # Public methods
+    # ----------------------------------------------------------------------------------
 
     def rename(self, new_name: str) -> None:
         res = (

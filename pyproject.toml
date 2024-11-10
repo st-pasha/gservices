@@ -26,5 +26,8 @@
   # Unknown types often occur in external libraries.
   reportUnknownMemberType = false
 
+[tool.setuptools]
+  packages = ["gservices"]
+
 [tool.setuptools.dynamic]
   dependencies = { file = ["requirements.txt"] }

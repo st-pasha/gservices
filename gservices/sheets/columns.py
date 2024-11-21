@@ -1,10 +1,4 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
-
-from gservices.sheets.column import Column
-
-if TYPE_CHECKING:
-    from gservices.sheets.sheet import Sheet
 
 
 class Columns:
@@ -82,3 +76,7 @@ class Columns:
     def _handle_column_inserted(self, index: int):
         if self._ncols is not None:
             self._ncols += 1
+
+
+from gservices.sheets.column import Column
+from gservices.sheets.sheet import Sheet

@@ -2,23 +2,8 @@ from __future__ import annotations
 from rich.console import Console
 from typing import TYPE_CHECKING, Any
 
-from gservices.sheets.cell_format import CellFormat
-from gservices.sheets.cell_value import (
-    CellValue,
-    HyperlinkFormula,
-    python_to_value,
-    value_to_python,
-)
-from gservices.sheets.utils import (
-    coords_to_address,
-    cell_formats_equal,
-    set_dotted_property,
-)
-
-
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
-    from gservices.sheets.sheet import Sheet
 
 pprint = Console().print
 
@@ -164,3 +149,18 @@ class Cell:
                 "fields": property,
             }
         })
+
+
+from gservices.sheets.cell_format import CellFormat
+from gservices.sheets.cell_value import (
+    CellValue,
+    HyperlinkFormula,
+    python_to_value,
+    value_to_python,
+)
+from gservices.sheets.sheet import Sheet
+from gservices.sheets.utils import (
+    coords_to_address,
+    cell_formats_equal,
+    set_dotted_property,
+)

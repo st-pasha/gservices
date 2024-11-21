@@ -1,20 +1,9 @@
 from __future__ import annotations
-import time
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Sequence
 from rich.console import Console
-
-from gservices.drive.spreadsheet_file import SpreadsheetFile
-from gservices.sheets.cell_format import CellFormat
-from gservices.sheets.sheet import Sheet
-from gservices.sheets.utils import (
-    color_object_to_string,
-    merge_requests,
-    set_dotted_property,
-)
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
-    from gservices.sheets.sheets_service import SheetsService
 
 
 class Spreadsheet:
@@ -38,12 +27,16 @@ class Spreadsheet:
         self._id: str = data.get("spreadsheetId", "")
         self._url: str = data.get("spreadsheetUrl", "")
         self._properties: gs.SpreadsheetProperties = data.get("properties", {})
+        self._metadata = SpreadsheetDeveloperMetadata(
+            data.get("developerMetadata", []), self
+        )
         self._sheets = [
             Sheet(data=item, spreadsheet=self) for item in data.get("sheets", [])
         ]
         # The list of all updates that are scheduled to be applied to the spreadsheet
         # on the next `save()`.
         self._pending_updates: list[gs.Request] = []
+        self._pending_callbacks: list[Callable[[gs.Response], None] | None] = []
 
     def save(self) -> None:
         """
@@ -54,8 +47,7 @@ class Spreadsheet:
         i0 = 0
         while i0 < len(self._pending_updates):
             updates = self._pending_updates[i0 : i0 + Spreadsheet.BATCH_SIZE]
-            Console().print(updates)
-            (
+            response = (
                 self._service.resource.spreadsheets()
                 .batchUpdate(
                     spreadsheetId=self._id,
@@ -66,9 +58,14 @@ class Spreadsheet:
                 )
                 .execute()
             )
+            replies = response.get("replies", [])
+            for i, reply in enumerate(replies):
+                callback = self._pending_callbacks[i + i0]
+                if callback:
+                    callback(reply)
             i0 += Spreadsheet.BATCH_SIZE
         self._pending_updates = []
-        time.sleep(1)
+        self._pending_callbacks = []
 
     # ----------------------------------------------------------------------------------
     # Basic properties
@@ -80,6 +77,14 @@ class Spreadsheet:
         The ID of the spreadsheet. This is the same as the file ID in Google Drive.
         """
         return self._id
+
+    @property
+    def metadata(self) -> SpreadsheetDeveloperMetadata:
+        """
+        Metadata associated with the spreadsheet; this object can be used to query
+        existing metadata, update it, or create new metadata records.
+        """
+        return self._metadata
 
     @property
     def url(self) -> str:
@@ -289,9 +294,23 @@ class Spreadsheet:
     def _add_request(
         self,
         request: gs.Request,
+        callback: Callable[[gs.Response], None] | None = None,
     ) -> None:
-        if self._pending_updates:
+        if not callback and self._pending_updates:
             previous_request = self._pending_updates[-1]
             if merge_requests(previous_request, request):
                 return
         self._pending_updates.append(request)
+        self._pending_callbacks.append(callback)
+
+
+from gservices.drive.spreadsheet_file import SpreadsheetFile
+from gservices.sheets.cell_format import CellFormat
+from gservices.sheets.developer_metadata import SpreadsheetDeveloperMetadata
+from gservices.sheets.sheet import Sheet
+from gservices.sheets.sheets_service import SheetsService
+from gservices.sheets.utils import (
+    color_object_to_string,
+    merge_requests,
+    set_dotted_property,
+)

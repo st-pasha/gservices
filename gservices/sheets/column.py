@@ -1,11 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
-from gservices.sheets.utils import set_dotted_property
-
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
-    from gservices.sheets.sheet import Sheet
 
 
 class Column:
@@ -13,7 +10,7 @@ class Column:
         assert index >= 0
         self._index = index
         self._sheet = sheet
-        self._properties_update: gs.DimensionProperties | None = None
+        self._metadata: ColumnDeveloperMetadata | None = None
 
     @property
     def width(self) -> int:
@@ -40,11 +37,21 @@ class Column:
         return self._index
 
     @property
+    def metadata(self) -> ColumnDeveloperMetadata:
+        if self._metadata is None:
+            data = self._properties.get("developerMetadata", [])
+            self._metadata = ColumnDeveloperMetadata(data, self)
+        return self._metadata
+
+    @property
     def _properties(self) -> gs.DimensionProperties:
+        self._sheet._load_data()
         grid_data = self._sheet._cell_data
         assert grid_data is not None
-        assert "columnMetadata" in grid_data
-        return grid_data["columnMetadata"][self._index]
+        if column_list := grid_data.get("columnMetadata"):
+            if self._index < len(column_list):
+                return column_list[self._index]
+        return {}
 
     def _set_property(self, property: str, value: Any) -> None:
         update_properties: gs.DimensionProperties = {}
@@ -62,3 +69,8 @@ class Column:
                 "fields": property,
             }
         })
+
+
+from gservices.sheets.developer_metadata import ColumnDeveloperMetadata
+from gservices.sheets.sheet import Sheet
+from gservices.sheets.utils import set_dotted_property

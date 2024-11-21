@@ -1,11 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Sequence
-from gservices.sheets.cell import Cell
-from gservices.sheets.utils import set_dotted_property
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
-    from gservices.sheets.sheet import Sheet
 
 
 class Row:
@@ -13,6 +10,7 @@ class Row:
         assert index >= 0
         self._index = index
         self._sheet: Sheet = sheet
+        self._metadata: RowDeveloperMetadata | None = None
 
     @property
     def index(self) -> int:
@@ -20,7 +18,7 @@ class Row:
 
     @property
     def height(self) -> int:
-        return self._properties.get("pixelSize", 100)
+        return self._properties.get("pixelSize", 21)
 
     @height.setter
     def height(self, value: int) -> None:
@@ -41,6 +39,13 @@ class Row:
     @property
     def values(self) -> Sequence[str]:
         return self._sheet.values[self._index]
+
+    @property
+    def metadata(self) -> RowDeveloperMetadata:
+        if self._metadata is None:
+            data = self._properties.get("developerMetadata", [])
+            self._metadata = RowDeveloperMetadata(data, self)
+        return self._metadata
 
     @property
     def previous_row(self) -> Row | None:
@@ -120,12 +125,13 @@ class Row:
 
     @property
     def _properties(self) -> gs.DimensionProperties:
-        # FIXME: `grid_data` may actually be None, or the row may be beyond the
-        #        available data range.
+        self._sheet._load_data()
         grid_data = self._sheet._cell_data
         assert grid_data is not None
-        assert "rowMetadata" in grid_data
-        return grid_data["rowMetadata"][self._index]
+        if row_list := grid_data.get("rowMetadata"):
+            if self._index < len(row_list):
+                return row_list[self._index]
+        return {}
 
     def _set_property(self, property: str, value: Any) -> None:
         update_properties: gs.DimensionProperties = {}
@@ -143,3 +149,9 @@ class Row:
                 "fields": property,
             }
         })
+
+
+from gservices.sheets.cell import Cell
+from gservices.sheets.developer_metadata import RowDeveloperMetadata
+from gservices.sheets.sheet import Sheet
+from gservices.sheets.utils import set_dotted_property

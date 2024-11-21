@@ -2,7 +2,7 @@ import re
 from typing import TYPE_CHECKING, Iterator
 import warnings
 
-from bs4 import BeautifulSoup
+# from bs4 import BeautifulSoup
 
 if TYPE_CHECKING:
     import googleapiclient._apis.gmail.v1.resources as g  # type: ignore

@@ -1,11 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Iterator, Callable
-
-from gservices.sheets.row import Row
-from gservices.sheets.utils import array_move
-
-if TYPE_CHECKING:
-    from gservices.sheets.sheet import Sheet
+from typing import Any, Iterator, Callable
 
 
 class Rows:
@@ -159,3 +153,8 @@ class Rows:
             for i, row in enumerate(self._rows):
                 if row is not None:
                     row._index = i
+
+
+from gservices.sheets.row import Row
+from gservices.sheets.sheet import Sheet
+from gservices.sheets.utils import array_move

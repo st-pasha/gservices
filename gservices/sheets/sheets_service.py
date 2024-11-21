@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.resources as gr  # type: ignore[reportMissingModuleSource]
     from google.oauth2.credentials import Credentials
-    from gservices.google_services import GoogleServices
 
 
 class SheetsService:
@@ -47,4 +46,5 @@ class SheetsService:
         return self._resource
 
 
+from gservices.google_services import GoogleServices
 from gservices.sheets.spreadsheet import Spreadsheet

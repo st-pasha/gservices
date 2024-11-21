@@ -2,19 +2,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Sequence, cast
 from rich.console import Console
 
-from gservices.sheets.cell import Cell
-from gservices.sheets.columns import Columns
-from gservices.sheets.rows import Rows
-from gservices.sheets.utils import (
-    array_move,
-    color_object_to_string,
-    color_string_to_object,
-    set_dotted_property,
-)
-
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
-    from gservices.sheets.spreadsheet import Spreadsheet
 
 
 class Sheet:
@@ -27,7 +16,7 @@ class Sheet:
         self._properties: gs.SheetProperties = data.get("properties", {})
         self._merges: list[gs.GridRange] = data.get("merges", [])
         self._protected: list[gs.ProtectedRange] = data.get("protectedRanges", [])
-        self._metadata: list[gs.DeveloperMetadata] = data.get("developerMetadata", [])
+        self._metadata = SheetDeveloperMetadata(data.get("developerMetadata", []), self)
         self._rows = Rows(self)
         self._columns = Columns(self)
         self._cell_cache: dict[tuple[int, int], Cell] = {}
@@ -146,18 +135,8 @@ class Sheet:
         return self._grid_properties.get("hideGridlines", False)
 
     @property
-    def metadata(self) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for record in self._metadata:
-            location = record.get("location", {})
-            if location.get("locationType") != "SHEET":
-                continue
-            if location.get("sheetId") != self.id:
-                continue
-            key = record.get("metadataKey", "")
-            value = record.get("metadataValue", "")
-            out[key] = value
-        return out
+    def metadata(self) -> SheetDeveloperMetadata:
+        return self._metadata
 
     @title.setter
     def title(self, value: str) -> None:
@@ -378,6 +357,8 @@ class Sheet:
         return f"Sheet('{self.title}', id={self.id})"
 
     def _load_data(self) -> None:
+        if self._cell_data is not None:
+            return
         data = (
             self._spreadsheet._service.resource.spreadsheets()
             .get(
@@ -506,3 +487,16 @@ class Sheet:
             cell = self._cell_cache.pop(key)
             cell._column += 1
             self._cell_cache[(key[0], key[1] + 1)] = cell
+
+
+from gservices.sheets.cell import Cell
+from gservices.sheets.columns import Columns
+from gservices.sheets.developer_metadata import SheetDeveloperMetadata
+from gservices.sheets.rows import Rows
+from gservices.sheets.spreadsheet import Spreadsheet
+from gservices.sheets.utils import (
+    array_move,
+    color_object_to_string,
+    color_string_to_object,
+    set_dotted_property,
+)

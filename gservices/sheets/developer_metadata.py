@@ -43,6 +43,13 @@ class DeveloperMetadata:
             }
         })
 
+    def __repr__(self) -> str:
+        if len(self) <= 5:
+            return f"{self.__class__.__name__}({list(self)})"
+        else:
+            parts = [str(self[i]) for i in range(4)]
+            return f"{self.__class__.__name__}([{", ".join(parts)}, ...])"
+
     def add(self, key: str, value: str, public: bool = False):
         metadata_item: gs.DeveloperMetadata = {
             "metadataKey": key,
@@ -117,13 +124,6 @@ class ColumnDeveloperMetadata(DeveloperMetadata):
                 "endIndex": self._column.index + 1,
             },
         }
-
-    def __repr__(self) -> str:
-        if len(self) <= 5:
-            return f"{self.__class__.__name__}({list(self)})"
-        else:
-            parts = [str(self[i]) for i in range(4)]
-            return f"{self.__class__.__name__}([{", ".join(parts)}, ...])"
 
 
 @dataclass

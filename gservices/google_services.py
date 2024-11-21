@@ -6,11 +6,6 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-from gservices.drive.drive_service import DriveService
-from gservices.gmail.gmail_service import GmailService
-from gservices.sheets.sheets_service import SheetsService
-from gservices.oauth2_scopes import OAuth2Scope
-
 
 class GoogleServices:
     def __init__(self, credentials: Credentials):
@@ -113,3 +108,9 @@ class GoogleServices:
 class _Logger(Protocol):
     def info(self, msg: str, /): ...
     def warning(self, msg: str, /): ...
+
+
+from gservices.drive.drive_service import DriveService
+from gservices.gmail.gmail_service import GmailService
+from gservices.sheets.sheets_service import SheetsService
+from gservices.oauth2_scopes import OAuth2Scope

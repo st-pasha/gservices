@@ -303,6 +303,12 @@ class Spreadsheet:
         self._pending_updates.append(request)
         self._pending_callbacks.append(callback)
 
+    def _check_integrity(self) -> None:
+        for i, sheet in enumerate(self.sheets):
+            assert sheet._spreadsheet is self
+            assert sheet.index == i
+            sheet._check_integrity()
+
 
 from gservices.drive.spreadsheet_file import SpreadsheetFile
 from gservices.sheets.cell_format import CellFormat

@@ -488,6 +488,33 @@ class Sheet:
             cell._column += 1
             self._cell_cache[(key[0], key[1] + 1)] = cell
 
+    def _check_integrity(self) -> None:
+        nrows = None
+        ncols = None
+        if (data := self._cell_data) is not None:
+            assert data.get("startColumn", 0) == 0
+            assert data.get("startRow", 0) == 0
+            rows = data.get("rowData", [])
+            nrows = len(rows)
+            ncols = len(rows[0].get("values", [])) if rows else 0
+            for row in rows:
+                assert len(row.get("values", [])) <= ncols
+            assert len(data.get("rowMetadata", [])) == nrows
+            assert len(data.get("columnMetadata", [])) == ncols
+        if (data := self._cell_values) is not None:
+            if nrows is None:
+                nrows = len(data)
+                ncols = len(data[0]) if data else 0
+            assert len(data) == nrows
+            for row in data:
+                assert len(row) == ncols
+        if nrows is not None:
+            assert ncols is not None
+            assert self.max_row_count >= nrows
+            assert self.max_column_count >= ncols
+        assert self.frozen_row_count <= self.max_row_count
+        assert self.frozen_column_count <= self.max_column_count
+
 
 from gservices.sheets.cell import Cell
 from gservices.sheets.columns import Columns

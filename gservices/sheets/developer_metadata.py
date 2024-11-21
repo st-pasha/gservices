@@ -75,6 +75,10 @@ class DeveloperMetadata:
     def _get_location(self) -> gs.DeveloperMetadataLocation:
         raise NotImplementedError()
 
+    def print(self, indent: str = ""):
+        for i, meta in enumerate(self):
+            pprint(f"{indent}[magenta not bold]\\[{i}][/]: {meta}")
+
 
 class SpreadsheetDeveloperMetadata(DeveloperMetadata):
     @override
@@ -137,3 +141,4 @@ from gservices.sheets.spreadsheet import Spreadsheet
 from gservices.sheets.sheet import Sheet
 from gservices.sheets.row import Row
 from gservices.sheets.column import Column
+from gservices.print_utils import pprint

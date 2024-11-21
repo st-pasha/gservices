@@ -1,11 +1,8 @@
 from __future__ import annotations
-from rich.console import Console
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
-
-pprint = Console().print
 
 
 class Cell:
@@ -164,3 +161,4 @@ from gservices.sheets.utils import (
     cell_formats_equal,
     set_dotted_property,
 )
+from gservices.print_utils import pprint

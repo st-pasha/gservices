@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable, Sequence
-from rich.console import Console
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -156,27 +155,28 @@ class Spreadsheet:
         return file
 
     def print(self):
-        print = Console().print
-        print(f"[bold cyan]Spreadsheet:")
-        print(f"  [green]title:[/] [bold white]{self.title}")
-        print(f"  [green]id:[/] {self.id}")
-        print(f"  [green]url:[/] {self.url}")
-        print(f"  [green]locale:[/] {self.locale}")
-        print(f"  [green]time_zone:[/] {self.time_zone}")
-        print(f"  [green]theme:[/]")
-        print(f"    [green]font_family:[/] {self.theme.get('primaryFontFamily')}")
-        print(f"    [green]colors:[/]")
+        pprint(f"[bold cyan]Spreadsheet:")
+        pprint(f"  [green]title:[/] [bold white]{self.title}")
+        pprint(f"  [green]id:[/] {self.id}")
+        pprint(f"  [green]url:[/] {self.url}")
+        pprint(f"  [green]locale:[/] {self.locale}")
+        pprint(f"  [green]time_zone:[/] {self.time_zone}")
+        pprint(f"  [green]theme:[/]")
+        pprint(f"    [green]font_family:[/] {self.theme.get('primaryFontFamily')}")
+        pprint(f"    [green]colors:[/]")
         for record in self.theme.get("themeColors", []):
             color = color_object_to_string(record.get("color", {}))
-            print(f"      [green]{record.get('colorType')}:[/] {color}")
-        print(f"  [green]cell_format:")
+            pprint(f"      [green]{record.get('colorType')}:[/] {color}")
+        pprint(f"  [green]cell_format:")
         self.default_cell_format.print(indent="    ")
-        print(f"  [green]sheets:")
+        pprint(f"  [green]sheets:")
         for sheet in self.sheets:
-            print(
+            pprint(
                 f"    [magenta not bold]\\[{sheet.index}][/]: "
                 f"[bold white]{sheet.title}[/], id={sheet.id}"
             )
+        pprint(f"  [green]metadata:")
+        self.metadata.print(indent="    ")
 
     # ----------------------------------------------------------------------------------
     # Sheets
@@ -320,3 +320,4 @@ from gservices.sheets.utils import (
     merge_requests,
     set_dotted_property,
 )
+from gservices.print_utils import pprint

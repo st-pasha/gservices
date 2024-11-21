@@ -1,14 +1,6 @@
 from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Literal
-from rich.console import Console
-from gservices.sheets.border_format import BorderFormat
-
-from gservices.sheets.utils import (
-    color_object_to_string,
-    color_string_to_object,
-    set_dotted_property,
-)
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -274,11 +266,10 @@ class CellFormat:
         self._set_property("borders.left", obj)
 
     def print(self, indent: str = ""):
-        print = Console().print
         if indent:
             i = indent
         else:
-            print("[bold cyan]CellFormat:")
+            pprint("[bold cyan]CellFormat:")
             i = "  "
         for prop in (
             "number_format",
@@ -299,7 +290,7 @@ class CellFormat:
             "border_bottom",
             "border_left",
         ):
-            print(f"{i}[green]{prop}:[/] {getattr(self, prop)}")
+            pprint(f"{i}[green]{prop}:[/] {getattr(self, prop)}")
 
     def _set_property(self, property: str, value: Any) -> None:
         if self._cell is None:
@@ -312,3 +303,12 @@ class CellFormat:
         text_format = self._data.get("textFormat", {})
         self._data["textFormat"] = text_format
         return text_format
+
+
+from gservices.sheets.border_format import BorderFormat
+from gservices.sheets.utils import (
+    color_object_to_string,
+    color_string_to_object,
+    set_dotted_property,
+)
+from gservices.print_utils import pprint

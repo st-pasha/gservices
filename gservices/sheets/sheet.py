@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal, Sequence, cast
-from rich.console import Console
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -193,26 +192,27 @@ class Sheet:
         self._set_property("gridProperties.hideGridlines", value)
 
     def print(self):
-        print = Console().print
-        print(f"[bold cyan]Sheet:")
-        print(f"  [green]title:[/] [bold white]{self.title}")
-        print(f"  [green]id:[/] {self.id}")
-        print(f"  [green]index:[/] {self.index}")
-        print(f"  [green]type:[/] {self.type}")
-        print(f"  [green]hidden:[/] {self.hidden}")
-        print(f"  [green]tab_color:[/] {self.tab_color}")
-        print(f"  [green]max_row_count:[/] {self.max_row_count}")
-        print(f"  [green]max_column_count:[/] {self.max_column_count}")
-        print(f"  [green]frozen_row_count:[/] {self.frozen_row_count}")
-        print(f"  [green]frozen_column_count:[/] {self.frozen_column_count}")
-        print(f"  [green]hide_gridlines:[/] {self.hide_gridlines}")
+        pprint(f"[bold cyan]Sheet:")
+        pprint(f"  [green]title:[/] [bold white]{self.title}")
+        pprint(f"  [green]id:[/] {self.id}")
+        pprint(f"  [green]index:[/] {self.index}")
+        pprint(f"  [green]type:[/] {self.type}")
+        pprint(f"  [green]hidden:[/] {self.hidden}")
+        pprint(f"  [green]tab_color:[/] {self.tab_color}")
+        pprint(f"  [green]max_row_count:[/] {self.max_row_count}")
+        pprint(f"  [green]max_column_count:[/] {self.max_column_count}")
+        pprint(f"  [green]frozen_row_count:[/] {self.frozen_row_count}")
+        pprint(f"  [green]frozen_column_count:[/] {self.frozen_column_count}")
+        pprint(f"  [green]hide_gridlines:[/] {self.hide_gridlines}")
         if self._cell_data is not None or self._cell_values is not None:
             nrows = len(self.rows)
             ncols = self.column_count
         else:
             nrows = "?"
             ncols = "?"
-        print(f"  [green]data:[/] \\[{nrows} x {ncols}]")
+        pprint(f"  [green]data:[/] \\[{nrows} x {ncols}]")
+        pprint(f"  [green]metadata:")
+        self.metadata.print(indent="    ")
 
     # ----------------------------------------------------------------------------------
     # Mutators
@@ -527,3 +527,4 @@ from gservices.sheets.utils import (
     color_string_to_object,
     set_dotted_property,
 )
+from gservices.print_utils import pprint

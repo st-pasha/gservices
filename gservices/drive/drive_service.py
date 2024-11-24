@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from typing import TYPE_CHECKING, Literal, cast
 
 from googleapiclient.discovery import build  # type: ignore
@@ -150,6 +151,23 @@ class DriveService:
         except FileNotFoundError:
             return False
 
+    def find(self, path: str | Path, mime_type: str | None = None) -> list[File]:
+        """
+        Returns a list of file that match the pattern [path], optionally
+        restricted to only those that have the requested [mime_type].
+
+        The [path] is interpreted as follows: if any segment of the path matches
+        an existing file/folder exactly, then that file/folder is used.
+        Otherwise, the segment is interpreted as a regex pattern (however,
+        special "patterns" `*` and `**` are also supported).
+        """
+        path = self._resolve_path(path)
+        files = self._find_paths(path)
+        if mime_type:
+            return [file for file in files if file.mime_type == mime_type]
+        else:
+            return files
+
     # ----------------------------------------------------------------------------------
     # Private
     # ----------------------------------------------------------------------------------
@@ -175,7 +193,7 @@ class DriveService:
             raise
 
     @property
-    def resource(self) -> "g.DriveResource":
+    def resource(self) -> g.DriveResource:
         return self._resource
 
     @property
@@ -189,3 +207,36 @@ class DriveService:
     def uncache(self, file: File) -> None:
         del self._ids[file.id]
         del self._paths[file.path]
+
+    def _find_paths(self, path: Path) -> list[File]:
+        if path in self._paths:
+            return [self._paths[path]]
+        else:
+            parents = self._find_paths(path.parent)
+            out: list[File] = []
+            for parent in parents:
+                if isinstance(parent, Folder):
+                    children = self._find_files_in_folder(parent, path.basename)
+                    out.extend(children)
+            return out
+
+    def _find_files_in_folder(self, folder: Folder, pattern: str) -> list[File]:
+        if pattern == "*":
+            return folder.list()
+        elif pattern == "**":
+            out: list[File] = []
+            self._find_all_files_recursively(folder, out)
+            return out
+        else:
+            regex = re.compile(pattern)
+            out: list[File] = []
+            for file in folder.list():
+                if re.match(regex, file.name):
+                    out.append(file)
+            return out
+
+    def _find_all_files_recursively(self, folder: Folder, out: list[File]):
+        for file in folder.list():
+            out.append(file)
+            if isinstance(file, Folder):
+                self._find_all_files_recursively(file, out)

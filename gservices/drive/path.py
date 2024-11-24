@@ -76,7 +76,11 @@ class Path:
         return f"Path({self})"
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, Path) and self._parts == other._parts
+        return (
+            isinstance(other, Path)
+            and self._parts == other._parts
+            and self._has_tail == other._has_tail
+        )
 
     def __hash__(self) -> int:
         return hash(self._parts)

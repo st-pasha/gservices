@@ -1,4 +1,6 @@
+from __future__ import annotations
 from typing import TYPE_CHECKING, cast
+
 from gservices.drive.folder import Folder
 
 if TYPE_CHECKING:
@@ -7,7 +9,7 @@ if TYPE_CHECKING:
 
 
 class SharedDrive(Folder):
-    def __init__(self, data: "g.Drive", drive: "DriveService"):
+    def __init__(self, data: g.Drive, drive: DriveService):
         super().__init__(cast("g.File", data), drive)
         self._shared_drive_id = self.id
 

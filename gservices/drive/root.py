@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING
+from __future__ import annotations
+from typing import TYPE_CHECKING, override
 
 from gservices.drive.folder import Folder
 from gservices.drive.path import Path
@@ -8,22 +9,23 @@ if TYPE_CHECKING:
 
 
 class Root(Folder):
-    def __init__(self, drive: "DriveService"):
+    def __init__(self, drive: DriveService):
         super().__init__({"id": "", "name": ""}, drive)
         self._path = Path(("",))
         self._shared_drive_id = ""
 
     @property
-    def parent(self) -> "Folder":
+    @override
+    def parent(self) -> Folder:
         raise ValueError("Root folder doesn't have a parent")
 
     @property
-    def user_drive(self) -> "UserDrive":
+    def user_drive(self) -> UserDrive:
         ud = self.list()[0]
         assert isinstance(ud, UserDrive)
         return ud
 
-    def _fetch_files(self) -> "FileList":
+    def _fetch_files(self) -> FileList:
         out = FileList([], path=self.path)
 
         # User drive

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 from gservices.drive.document_file import DocumentFile
 from gservices.drive.file import File
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
 class Folder(File):
     MIME = "application/vnd.google-apps.folder"
 
-    def __init__(self, data: "g.File", drive: "DriveService"):
+    def __init__(self, data: g.File, drive: DriveService):
         super().__init__(data, drive)
         self._file_list: FileList | None = None
         assert data.get("mimeType", Folder.MIME) == Folder.MIME
@@ -20,7 +21,7 @@ class Folder(File):
     def mime_type(self) -> str:
         return Folder.MIME
 
-    def list(self) -> "FileList":
+    def list(self) -> FileList:
         if self._file_list is None:
             self._file_list = self._fetch_files()
         return self._file_list
@@ -54,7 +55,7 @@ class Folder(File):
         self.handle_file_added(new_file)
         return new_file
 
-    def _fetch_files(self) -> "FileList":
+    def _fetch_files(self) -> FileList:
         out = FileList([], self.path)
         drive_id = self.shared_drive_id
         page_token = ""

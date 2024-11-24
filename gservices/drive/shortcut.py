@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import TYPE_CHECKING
 from gservices.drive.file import File
 from gservices.drive.path import Path
@@ -10,7 +11,7 @@ if TYPE_CHECKING:
 class Shortcut(File):
     MIME = "application/vnd.google-apps.shortcut"
 
-    def __init__(self, data: "g.File", drive: "DriveService"):
+    def __init__(self, data: g.File, drive: DriveService):
         super().__init__(data, drive)
         self._target: File | None = None
         self._broken: bool = False
@@ -59,6 +60,6 @@ class Shortcut(File):
 
 
 class MissingFile(File):
-    def __init__(self, data: "g.File", drive: "DriveService"):
+    def __init__(self, data: g.File, drive: DriveService):
         super().__init__(data, drive)
         self._path = Path(("?",))

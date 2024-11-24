@@ -48,6 +48,7 @@ __pypackages__/
 
 # Environments
 .env
+.env.json
 .venv
 env/
 venv/

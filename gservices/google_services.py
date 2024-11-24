@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import pathlib
 from typing import Any, Protocol, Sequence, cast
 
 from google.auth.transport.requests import Request
@@ -8,11 +9,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 
 class GoogleServices:
-    def __init__(self, credentials: Credentials):
+    def __init__(self, credentials: Credentials, token_updated: bool = False):
         self._credentials = credentials
         self._drive_service: DriveService | None = None
         self._gmail_service: GmailService | None = None
         self._sheets_service: SheetsService | None = None
+        self._token_updated = token_updated
 
     @staticmethod
     def connect(
@@ -45,6 +47,7 @@ class GoogleServices:
         this parameter may be omitted if a valid [token] is supplied.
         """
         creds: Credentials | None = None
+        token_updated = False
 
         # Create Credentials object from [token]
         if token:
@@ -83,8 +86,24 @@ class GoogleServices:
                 log.info(f"New token expiry is {creds.expiry}")
             token.clear()
             token.update(json.loads(creds.to_json()))
+            token_updated = True
 
-        return GoogleServices(creds)
+        return GoogleServices(creds, token_updated)
+
+    @staticmethod
+    def from_file(file_name: str | pathlib.Path) -> GoogleServices:
+        data = json.loads(pathlib.Path(file_name).read_text())
+        if "credentials" not in data:
+            raise ValueError("Missing `credentials` field in the file")
+        credentials = data["credentials"]
+        token = data.get("token", {})
+        google = GoogleServices.connect(
+            credentials=credentials, token=token, scopes=data.get("scopes", [])
+        )
+        if google.token_updated:
+            data["token"] = token
+            pathlib.Path(file_name).write_text(json.dumps(data, indent="  "))
+        return google
 
     @property
     def Drive(self) -> DriveService:
@@ -103,6 +122,10 @@ class GoogleServices:
         if self._sheets_service is None:
             self._sheets_service = SheetsService.build(self._credentials, self)
         return self._sheets_service
+
+    @property
+    def token_updated(self) -> bool:
+        return self._token_updated
 
 
 class _Logger(Protocol):

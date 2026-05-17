@@ -1,6 +1,6 @@
 [build-system]
-  build-backend = "setuptools.build_meta"
-  requires = ["setuptools>=68", "setuptools-scm>=8.0"]
+  build-backend = "hatchling.build"
+  requires = ["hatchling"]
 
 [project]
   authors = [{ name = "Pasha Stetsenko", email = "stpasha@gmail.com" }]
@@ -9,7 +9,11 @@
     "Programming Language :: Python :: 3.12",
   ]
   description = "Library for accessing Google API Services"
-  dynamic = ["dependencies"]
+  dependencies = [
+    "google-api-python-client>=2.151.0",
+    "google-api-python-client-stubs>=1.28.0",
+    "google-auth-oauthlib>=1.2.1",
+  ]
   keywords = []
   name = "gservices"
   readme = "README.md"
@@ -19,15 +23,12 @@
   [project.urls]
     Source = "https://github.com/st-pasha/gservices"
 
+[tool.hatch.build.targets.wheel]
+  packages = ["gservices"]
+
 [tool.pyright]
   typeCheckingMode = "strict"
   reportPrivateUsage = false
 
   # Unknown types often occur in external libraries.
   reportUnknownMemberType = false
-
-[tool.setuptools]
-  packages = ["gservices"]
-
-[tool.setuptools.dynamic]
-  dependencies = { file = ["requirements.txt"] }

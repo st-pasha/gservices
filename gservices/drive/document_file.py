@@ -1,4 +1,3 @@
-from __future__ import annotations
 from gservices.drive.file import File
 
 

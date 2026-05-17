@@ -1,4 +1,3 @@
-from __future__ import annotations
 from typing import TYPE_CHECKING
 from gservices.drive.file import File
 from gservices.drive.path import Path

@@ -1,4 +1,3 @@
-from __future__ import annotations
 from typing import TYPE_CHECKING, Generator, Sequence
 
 from googleapiclient.discovery import build  # type: ignore

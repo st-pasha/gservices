@@ -6,7 +6,7 @@
   authors = [{ name = "Pasha Stetsenko", email = "stpasha@gmail.com" }]
   classifiers = [
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.15",
   ]
   description = "Library for accessing Google API Services"
   dependencies = [
@@ -17,7 +17,7 @@
   keywords = []
   name = "gservices"
   readme = "README.md"
-  requires-python = ">=3.12"
+  requires-python = ">=3.15"
   version = "0.1.0"
 
   [project.urls]

@@ -1,7 +1,10 @@
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
+
+    from gservices.sheets.snapshot import SpreadsheetSnapshot
 
 
 class Spreadsheet:
@@ -236,6 +239,32 @@ class Spreadsheet:
             sheet = sheet_obj
         assert sheet._spreadsheet is self
         sheet.delete()
+
+    def snapshot(self, include_computed: bool = False) -> SpreadsheetSnapshot:
+        """
+        Builds a layered, human-readable snapshot of the spreadsheet's current state.
+
+        Triggers a full grid load on each sheet if cell data isn't loaded yet.
+        Set `include_computed=True` to capture formula results in a separate
+        `computed` map per sheet; by default this is omitted to keep snapshots
+        stable across volatile formulas (NOW, RAND, IMPORTRANGE, etc.).
+        """
+        from gservices.sheets.snapshot import build_snapshot
+        return build_snapshot(self, include_computed=include_computed)
+
+    def save_snapshot(
+        self,
+        path: str | Path,
+        include_computed: bool = False,
+    ) -> None:
+        """
+        Writes a snapshot of this spreadsheet to disk as JSON.
+
+        The on-disk layout is optimized for `git diff` readability: each data
+        row, format entry, and border segment occupies a single line.
+        """
+        from gservices.sheets.snapshot import write_snapshot
+        write_snapshot(self.snapshot(include_computed=include_computed), path)
 
     def move_sheet(
         self,

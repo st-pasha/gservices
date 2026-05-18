@@ -2,9 +2,16 @@ import json
 import pathlib
 from typing import Any, Protocol, Sequence, cast
 
+from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
+from google.oauth2.credentials import Credentials as UserCredentials
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+
+lazy from gservices.drive.drive_service import DriveService
+lazy from gservices.gmail.gmail_service import GmailService
+lazy from gservices.sheets.sheets_service import SheetsService
+lazy from gservices.oauth2_scopes import OAuth2Scope
 
 
 class GoogleServices:
@@ -45,7 +52,7 @@ class GoogleServices:
         credentials data will be used to request an access token; consequently
         this parameter may be omitted if a valid [token] is supplied.
         """
-        creds: Credentials | None = None
+        creds: UserCredentials | None = None
         token_updated = False
 
         # Create Credentials object from [token]
@@ -63,7 +70,7 @@ class GoogleServices:
                         " re-requested."
                     )
             else:
-                creds = Credentials.from_authorized_user_info(token, scopes)
+                creds = UserCredentials.from_authorized_user_info(token, scopes)
 
         # Create a new Credentials object, or refresh the existing one
         if not creds or not creds.valid:
@@ -88,6 +95,51 @@ class GoogleServices:
             token_updated = True
 
         return GoogleServices(creds, token_updated)
+
+    @staticmethod
+    def from_service_account_file(
+        filename: str | pathlib.Path,
+        scopes: Sequence[OAuth2Scope],
+        subject: str | None = None,
+    ) -> GoogleServices:
+        """
+        Initialize Google API Service using a service account key file.
+
+        The [filename] points to the JSON key file issued by Google Cloud for
+        a service account. The [scopes] list specifies the OAuth2 scopes that
+        the service account should have access to.
+
+        If [subject] is provided, the service account will impersonate that
+        user. This is used for domain-wide delegation in Google Workspace —
+        the service account must be authorized for delegation, and [subject]
+        must be a user in the workspace.
+        """
+        creds = ServiceAccountCredentials.from_service_account_file(
+            str(filename), scopes=list(scopes)
+        )
+        if subject:
+            creds = creds.with_subject(subject)
+        return GoogleServices(creds)
+
+    @staticmethod
+    def from_service_account_info(
+        info: dict[str, Any],
+        scopes: Sequence[OAuth2Scope],
+        subject: str | None = None,
+    ) -> GoogleServices:
+        """
+        Initialize Google API Service using a service account key dict.
+
+        Same as [from_service_account_file], but accepts the parsed JSON key
+        contents directly instead of a path. Useful when the key is loaded
+        from a secret store rather than the filesystem.
+        """
+        creds = ServiceAccountCredentials.from_service_account_info(
+            info, scopes=list(scopes)
+        )
+        if subject:
+            creds = creds.with_subject(subject)
+        return GoogleServices(creds)
 
     @staticmethod
     def from_file(file_name: str | pathlib.Path) -> GoogleServices:
@@ -130,9 +182,3 @@ class GoogleServices:
 class _Logger(Protocol):
     def info(self, msg: str, /): ...
     def warning(self, msg: str, /): ...
-
-
-from gservices.drive.drive_service import DriveService
-from gservices.gmail.gmail_service import GmailService
-from gservices.sheets.sheets_service import SheetsService
-from gservices.oauth2_scopes import OAuth2Scope

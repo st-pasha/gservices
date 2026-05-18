@@ -12,7 +12,7 @@ from gservices.drive.root import Root, UserDrive
 
 if TYPE_CHECKING:
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
-    from google.oauth2.credentials import Credentials
+    from google.auth.credentials import Credentials
 
 
 class DriveService:

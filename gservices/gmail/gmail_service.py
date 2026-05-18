@@ -4,7 +4,7 @@ from googleapiclient.discovery import build  # type: ignore
 
 if TYPE_CHECKING:
     import googleapiclient._apis.gmail.v1.resources as g  # type: ignore
-    from google.oauth2.credentials import Credentials
+    from google.auth.credentials import Credentials
 
 
 class GmailService:

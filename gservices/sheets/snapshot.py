@@ -31,7 +31,10 @@ SCHEMA_VERSION = 1
 
 _DEFAULT_ROW_HEIGHT = 21
 _DEFAULT_COL_WIDTH = 100
-_DATE_EPOCH = datetime(1899, 12, 30)  # Google Sheets / Excel serial-date epoch.
+# Google Sheets / Excel serial-date epoch. Naive (no tzinfo) by design —
+# spreadsheet serial dates are calendar values interpreted in the user's locale,
+# not absolute timestamps.
+_DATE_EPOCH = datetime(1899, 12, 30)  # noqa: DTZ001
 
 _DATE_FORMAT_TYPES = ("DATE", "TIME", "DATE_TIME")
 
@@ -204,7 +207,7 @@ class SpreadsheetSnapshot(TypedDict):
 # ============================================================================
 
 def build_snapshot(
-    spreadsheet: "Spreadsheet",
+    spreadsheet: Spreadsheet,
     include_computed: bool = False,
 ) -> SpreadsheetSnapshot:
     """
@@ -223,7 +226,7 @@ def build_snapshot(
     }
 
 
-def write_snapshot(snap: SpreadsheetSnapshot, path: "str | Path") -> None:
+def write_snapshot(snap: SpreadsheetSnapshot, path: str | Path) -> None:
     """Writes a snapshot to disk as JSON with diff-friendly layout."""
     wrapped = _wrap_for_emit(snap)
     text = _emit(wrapped, depth=0) + "\n"
@@ -235,7 +238,7 @@ def write_snapshot(snap: SpreadsheetSnapshot, path: "str | Path") -> None:
 # ============================================================================
 
 def _build_spreadsheet_meta(
-    spreadsheet: "Spreadsheet",
+    spreadsheet: Spreadsheet,
 ) -> SpreadsheetMetaSnapshot:
     result: dict[str, Any] = {
         "id": spreadsheet.id,
@@ -262,7 +265,7 @@ def _build_spreadsheet_meta(
     )
 
 
-def _build_theme(theme: "gs.SpreadsheetTheme") -> ThemeSnapshot:
+def _build_theme(theme: gs.SpreadsheetTheme) -> ThemeSnapshot:
     result: dict[str, Any] = {}
     ff = theme.get("primaryFontFamily")
     if ff:
@@ -297,8 +300,8 @@ def _build_theme(theme: "gs.SpreadsheetTheme") -> ThemeSnapshot:
 
 
 def _build_sheet(
-    sheet: "Sheet",
-    spreadsheet: "Spreadsheet",
+    sheet: Sheet,
+    spreadsheet: Spreadsheet,
     include_computed: bool,
 ) -> SheetSnapshot:
     sheet._load_data()  # type: ignore[reportPrivateUsage]
@@ -335,7 +338,7 @@ def _build_sheet(
         "gs.CellFormat",
         spreadsheet._properties.get("defaultFormat", {}),  # type: ignore[reportPrivateUsage]
     )
-    cell_data: "gs.GridData | None" = sheet._cell_data  # type: ignore[reportPrivateUsage]
+    cell_data: gs.GridData | None = sheet._cell_data  # type: ignore[reportPrivateUsage]
     rows_data: list[Any] = (
         cell_data.get("rowData", []) if cell_data is not None else []
     )
@@ -385,9 +388,8 @@ def _build_sheet(
                 has_content = True
 
             borders = eff_fmt.get("borders")
-            if borders:
-                if _collect_borders(borders, ri, ci, border_edges):
-                    has_content = True
+            if borders and _collect_borders(borders, ri, ci, border_edges):
+                has_content = True
 
             note = cv.get("note")
             if note:
@@ -469,7 +471,7 @@ def _build_sheet(
     return cast(SheetSnapshot, _order_keys(result, _SHEET_KEY_ORDER))
 
 
-def _build_merges(merges: list["gs.GridRange"]) -> list[str]:
+def _build_merges(merges: list[gs.GridRange]) -> list[str]:
     out: list[str] = []
     for m in merges:
         r0 = m.get("startRowIndex", 0)
@@ -489,7 +491,7 @@ def _build_merges(merges: list["gs.GridRange"]) -> list[str]:
 
 
 def _build_row_meta(
-    row_meta_list: list["gs.DimensionProperties"],
+    row_meta_list: list[gs.DimensionProperties],
 ) -> dict[str, RowMetaSnapshot]:
     out: dict[str, RowMetaSnapshot] = {}
     for i, rm in enumerate(row_meta_list):
@@ -508,7 +510,7 @@ def _build_row_meta(
 
 
 def _build_col_meta(
-    col_meta_list: list["gs.DimensionProperties"],
+    col_meta_list: list[gs.DimensionProperties],
 ) -> dict[str, ColMetaSnapshot]:
     out: dict[str, ColMetaSnapshot] = {}
     for i, cm in enumerate(col_meta_list):
@@ -527,7 +529,7 @@ def _build_col_meta(
 
 
 def _build_metadata_items(
-    data_list: list["gs.DeveloperMetadata"],
+    data_list: list[gs.DeveloperMetadata],
 ) -> list[MetadataSnapshot]:
     items: list[MetadataSnapshot] = []
     for item in data_list:
@@ -541,22 +543,22 @@ def _build_metadata_items(
 
 
 def _spreadsheet_metadata_raw(
-    spreadsheet: "Spreadsheet",
-) -> list["gs.DeveloperMetadata"]:
+    spreadsheet: Spreadsheet,
+) -> list[gs.DeveloperMetadata]:
     return cast(
         list["gs.DeveloperMetadata"],
         spreadsheet.metadata._data,  # type: ignore[reportPrivateUsage]
     )
 
 
-def _sheet_metadata_raw(sheet: "Sheet") -> list["gs.DeveloperMetadata"]:
+def _sheet_metadata_raw(sheet: Sheet) -> list[gs.DeveloperMetadata]:
     return cast(
         list["gs.DeveloperMetadata"],
         sheet._metadata._data,  # type: ignore[reportPrivateUsage]
     )
 
 
-def _sheet_merges_raw(sheet: "Sheet") -> list["gs.GridRange"]:
+def _sheet_merges_raw(sheet: Sheet) -> list[gs.GridRange]:
     return cast(
         list["gs.GridRange"],
         sheet._merges,  # type: ignore[reportPrivateUsage]
@@ -568,7 +570,7 @@ def _sheet_merges_raw(sheet: "Sheet") -> list["gs.GridRange"]:
 # ============================================================================
 
 def _encode_cell_value(
-    value: "gs.ExtendedValue | None",
+    value: gs.ExtendedValue | None,
     nf_type: str | None,
 ) -> CellValueJSON:
     if value is None:
@@ -615,8 +617,8 @@ def _serial_to_iso(serial: float, nf_type: str) -> str:
 # ============================================================================
 
 def _extract_cell_format(
-    fmt: "gs.CellFormat",
-    default: "gs.CellFormat",
+    fmt: gs.CellFormat,
+    default: gs.CellFormat,
 ) -> CellFormatSnapshot:
     result: dict[str, Any] = {}
 
@@ -696,7 +698,7 @@ def _extract_cell_format(
     )
 
 
-def _number_format_string(nf: "gs.NumberFormat | None") -> str | None:
+def _number_format_string(nf: gs.NumberFormat | None) -> str | None:
     if nf is None:
         return None
     t = nf.get("type")
@@ -713,7 +715,7 @@ def _number_format_string(nf: "gs.NumberFormat | None") -> str | None:
 # ============================================================================
 
 def _collect_borders(
-    borders: "gs.Borders",
+    borders: gs.Borders,
     row: int,
     col: int,
     edges: dict[tuple[str, str, int, str | None], set[tuple[int, int]]],
@@ -750,7 +752,7 @@ def _collect_borders(
     return found
 
 
-def _border_meaningful(border: "gs.Border") -> bool:
+def _border_meaningful(border: gs.Border) -> bool:
     style = border.get("style")
     width = border.get("width", 0)
     if not style or style in ("NONE", "STYLE_UNSPECIFIED"):
@@ -759,7 +761,7 @@ def _border_meaningful(border: "gs.Border") -> bool:
 
 
 def _border_key(
-    direction: str, border: "gs.Border"
+    direction: str, border: gs.Border
 ) -> tuple[str, str, int, str | None]:
     style = border.get("style") or "SOLID"
     width = border.get("width", 0)

@@ -10,14 +10,23 @@ import json
 from typing import TYPE_CHECKING
 
 from gservices.sheets.snapshot import (
-    _Inline,
     _addr_dict,
+    _border_key,
+    _border_meaningful,
+    _build_borders,
+    _build_col_meta,
+    _build_merges,
+    _build_metadata_items,
+    _build_row_meta,
+    _build_theme,
     _col_to_letter,
+    _collect_borders,
     _compact_cells_to_ranges,
     _compact_to_range_list,
     _emit,
     _encode_cell_value,
     _extract_cell_format,
+    _Inline,
     _number_format_string,
     _order_keys,
     _range_sort_key,
@@ -26,6 +35,11 @@ from gservices.sheets.snapshot import (
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
+
+# Shape of the per-direction border accumulator used by _collect_borders and
+# _build_borders. The key is (direction, style, width, color); the value is
+# the set of cells whose edge carries that border style.
+EdgesDict = dict[tuple[str, str, int, str | None], set[tuple[int, int]]]
 
 
 # ----------------------------------------------------------------------------
@@ -235,46 +249,46 @@ class TestNumberFormatString:
 
 class TestExtractCellFormat:
     def test_empty(self):
-        empty: "gs.CellFormat" = {}
+        empty: gs.CellFormat = {}
         assert _extract_cell_format(empty, empty) == {}
 
     def test_only_bold_differs(self):
-        fmt: "gs.CellFormat" = {"textFormat": {"bold": True, "fontSize": 10}}
-        default: "gs.CellFormat" = {"textFormat": {"fontSize": 10}}
+        fmt: gs.CellFormat = {"textFormat": {"bold": True, "fontSize": 10}}
+        default: gs.CellFormat = {"textFormat": {"fontSize": 10}}
         assert _extract_cell_format(fmt, default) == {"bold": True}
 
     def test_subtracts_default(self):
         # Cell has bold=True; default also has bold=True — should not appear.
-        fmt: "gs.CellFormat" = {"textFormat": {"bold": True}}
-        default: "gs.CellFormat" = {"textFormat": {"bold": True}}
+        fmt: gs.CellFormat = {"textFormat": {"bold": True}}
+        default: gs.CellFormat = {"textFormat": {"bold": True}}
         assert _extract_cell_format(fmt, default) == {}
 
     def test_background_color(self):
-        fmt: "gs.CellFormat" = {"backgroundColorStyle": {"rgbColor": {"red": 1.0}}}
-        default: "gs.CellFormat" = {}
+        fmt: gs.CellFormat = {"backgroundColorStyle": {"rgbColor": {"red": 1.0}}}
+        default: gs.CellFormat = {}
         result = _extract_cell_format(fmt, default)
         bg = result.get("bg")
         assert bg is not None
         assert bg.startswith("#ff")
 
     def test_horizontal_alignment(self):
-        fmt: "gs.CellFormat" = {"horizontalAlignment": "CENTER"}
-        default: "gs.CellFormat" = {}
+        fmt: gs.CellFormat = {"horizontalAlignment": "CENTER"}
+        default: gs.CellFormat = {}
         assert _extract_cell_format(fmt, default) == {"halign": "CENTER"}
 
     def test_unspecified_alignment_omitted(self):
-        fmt: "gs.CellFormat" = {"horizontalAlignment": "HORIZONTAL_ALIGN_UNSPECIFIED"}
-        default: "gs.CellFormat" = {}
+        fmt: gs.CellFormat = {"horizontalAlignment": "HORIZONTAL_ALIGN_UNSPECIFIED"}
+        default: gs.CellFormat = {}
         assert _extract_cell_format(fmt, default) == {}
 
     def test_key_ordering(self):
         # Output keys should follow _CELL_FORMAT_KEY_ORDER, not insertion order.
-        fmt: "gs.CellFormat" = {
+        fmt: gs.CellFormat = {
             "textFormat": {"bold": True, "italic": True},
             "horizontalAlignment": "CENTER",
             "backgroundColorStyle": {"rgbColor": {"red": 1.0}},
         }
-        default: "gs.CellFormat" = {}
+        default: gs.CellFormat = {}
         keys = list(_extract_cell_format(fmt, default).keys())
         # bg comes before halign comes before bold/italic
         assert keys.index("bg") < keys.index("halign")
@@ -282,10 +296,10 @@ class TestExtractCellFormat:
         assert keys.index("bold") < keys.index("italic")
 
     def test_padding_serialized_as_trbl_list(self):
-        fmt: "gs.CellFormat" = {
+        fmt: gs.CellFormat = {
             "padding": {"top": 1, "right": 2, "bottom": 3, "left": 4}
         }
-        default: "gs.CellFormat" = {}
+        default: gs.CellFormat = {}
         result = _extract_cell_format(fmt, default)
         assert result.get("padding") == [1, 2, 3, 4]
 
@@ -387,3 +401,438 @@ class TestEmit:
         # ensure_ascii=False keeps characters as-is — important for readability.
         out = _emit("héllo", 0)
         assert out == '"héllo"'
+
+
+# ----------------------------------------------------------------------------
+# _border_meaningful
+# ----------------------------------------------------------------------------
+
+class TestBorderMeaningful:
+    def test_empty(self):
+        border: gs.Border = {}
+        assert _border_meaningful(border) is False
+
+    def test_style_none(self):
+        border: gs.Border = {"style": "NONE", "width": 1}
+        assert _border_meaningful(border) is False
+
+    def test_style_unspecified(self):
+        border: gs.Border = {"style": "STYLE_UNSPECIFIED", "width": 1}
+        assert _border_meaningful(border) is False
+
+    def test_zero_width(self):
+        border: gs.Border = {"style": "SOLID", "width": 0}
+        assert _border_meaningful(border) is False
+
+    def test_solid_thin(self):
+        border: gs.Border = {"style": "SOLID", "width": 1}
+        assert _border_meaningful(border) is True
+
+    def test_dotted_thick(self):
+        border: gs.Border = {"style": "DOTTED", "width": 3}
+        assert _border_meaningful(border) is True
+
+
+# ----------------------------------------------------------------------------
+# _border_key
+# ----------------------------------------------------------------------------
+
+class TestBorderKey:
+    def test_groups_identical_borders(self):
+        # Two borders that differ only by source-side direction should produce
+        # the same key when given the same direction argument — that's how
+        # multiple cells coalesce into a single line in the output.
+        border1: gs.Border = {"style": "SOLID", "width": 1}
+        border2: gs.Border = {"style": "SOLID", "width": 1}
+        assert _border_key("horizontal", border1) == _border_key(
+            "horizontal", border2
+        )
+
+    def test_distinguishes_by_direction(self):
+        border: gs.Border = {"style": "SOLID", "width": 1}
+        assert _border_key("horizontal", border) != _border_key(
+            "vertical", border
+        )
+
+    def test_distinguishes_by_style(self):
+        b1: gs.Border = {"style": "SOLID", "width": 1}
+        b2: gs.Border = {"style": "DOTTED", "width": 1}
+        assert _border_key("horizontal", b1) != _border_key("horizontal", b2)
+
+    def test_distinguishes_by_color(self):
+        b1: gs.Border = {
+            "style": "SOLID",
+            "width": 1,
+            "colorStyle": {"rgbColor": {"red": 1.0}},
+        }
+        b2: gs.Border = {
+            "style": "SOLID",
+            "width": 1,
+            "colorStyle": {"rgbColor": {"blue": 1.0}},
+        }
+        assert _border_key("horizontal", b1) != _border_key("horizontal", b2)
+
+
+# ----------------------------------------------------------------------------
+# _collect_borders
+# ----------------------------------------------------------------------------
+
+class TestCollectBorders:
+    def test_no_borders(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {}
+        assert _collect_borders(borders, 5, 5, edges) is False
+        assert edges == {}
+
+    def test_bottom_border_stays_as_bottom(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "bottom": {"style": "SOLID", "width": 1},
+        }
+        _collect_borders(borders, 2, 3, edges)
+        # Exactly one horizontal entry covering cell (2, 3).
+        assert len(edges) == 1
+        key, cells = next(iter(edges.items()))
+        assert key[0] == "horizontal"
+        assert cells == {(2, 3)}
+
+    def test_top_border_canonicalizes_to_bottom_of_prev_row(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "top": {"style": "SOLID", "width": 1},
+        }
+        _collect_borders(borders, 3, 5, edges)
+        # Top of (3, 5) == bottom of (2, 5).
+        cells = next(iter(edges.values()))
+        assert cells == {(2, 5)}
+
+    def test_top_of_row_zero_dropped(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "top": {"style": "SOLID", "width": 1},
+        }
+        # Row 0's top edge is the grid's outer boundary — dropped.
+        assert _collect_borders(borders, 0, 5, edges) is False
+        assert edges == {}
+
+    def test_right_border_stays_as_right(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "right": {"style": "SOLID", "width": 1},
+        }
+        _collect_borders(borders, 2, 3, edges)
+        assert len(edges) == 1
+        key, cells = next(iter(edges.items()))
+        assert key[0] == "vertical"
+        assert cells == {(2, 3)}
+
+    def test_left_border_canonicalizes_to_right_of_prev_col(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "left": {"style": "SOLID", "width": 1},
+        }
+        _collect_borders(borders, 4, 6, edges)
+        cells = next(iter(edges.values()))
+        assert cells == {(4, 5)}
+
+    def test_left_of_col_zero_dropped(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "left": {"style": "SOLID", "width": 1},
+        }
+        assert _collect_borders(borders, 4, 0, edges) is False
+        assert edges == {}
+
+    def test_top_and_bottom_with_same_style_coalesce(self):
+        # If cell (2, 0) has both top and bottom borders with identical style,
+        # they should produce TWO entries in edges (bottom-of-1 and bottom-of-2),
+        # both under the same horizontal key.
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "top": {"style": "SOLID", "width": 1},
+            "bottom": {"style": "SOLID", "width": 1},
+        }
+        _collect_borders(borders, 2, 0, edges)
+        assert len(edges) == 1
+        cells = next(iter(edges.values()))
+        assert cells == {(1, 0), (2, 0)}
+
+    def test_all_four_borders(self):
+        edges: EdgesDict = {}
+        borders: gs.Borders = {
+            "top": {"style": "SOLID", "width": 1},
+            "bottom": {"style": "SOLID", "width": 1},
+            "left": {"style": "SOLID", "width": 1},
+            "right": {"style": "SOLID", "width": 1},
+        }
+        _collect_borders(borders, 2, 3, edges)
+        # One horizontal key, one vertical key.
+        directions = {k[0] for k in edges}
+        assert directions == {"horizontal", "vertical"}
+        horizontal_cells = next(
+            cells for k, cells in edges.items() if k[0] == "horizontal"
+        )
+        vertical_cells = next(
+            cells for k, cells in edges.items() if k[0] == "vertical"
+        )
+        # Top → (1, 3); bottom → (2, 3)
+        assert horizontal_cells == {(1, 3), (2, 3)}
+        # Left → (2, 2); right → (2, 3)
+        assert vertical_cells == {(2, 2), (2, 3)}
+
+
+# ----------------------------------------------------------------------------
+# _build_borders
+# ----------------------------------------------------------------------------
+
+class TestBuildBorders:
+    def test_empty(self):
+        assert _build_borders({}, 0, 0) == {}
+
+    def test_horizontal_line(self):
+        edges: EdgesDict = {
+            ("horizontal", "SOLID", 1, "#000000"): {(2, 0), (2, 1), (2, 2)},
+        }
+        result = _build_borders(edges, 10, 10)
+        # Three consecutive cells in row 2 collapse to "A3:C3".
+        assert result.get("horizontal") == [
+            ["A3:C3", {"style": "SOLID", "width": 1}]
+        ]
+        assert "vertical" not in result
+
+    def test_vertical_line(self):
+        edges: EdgesDict = {
+            ("vertical", "SOLID_THICK", 3, None): {(0, 5), (1, 5), (2, 5)},
+        }
+        result = _build_borders(edges, 10, 10)
+        assert result.get("vertical") == [
+            ["F1:F3", {"style": "SOLID_THICK", "width": 3}]
+        ]
+
+    def test_black_color_suppressed(self):
+        # The default color #000000 is suppressed for compactness.
+        edges: EdgesDict = {
+            ("horizontal", "SOLID", 1, "#000000"): {(0, 0)},
+        }
+        result = _build_borders(edges, 10, 10)
+        assert result.get("horizontal") == [["A1", {"style": "SOLID", "width": 1}]]
+
+    def test_non_black_color_included(self):
+        edges: EdgesDict = {
+            ("horizontal", "SOLID", 1, "#FF0000"): {(0, 0)},
+        }
+        result = _build_borders(edges, 10, 10)
+        assert result.get("horizontal") == [
+            ["A1", {"style": "SOLID", "width": 1, "color": "#FF0000"}]
+        ]
+
+    def test_horizontal_and_vertical_together(self):
+        edges: EdgesDict = {
+            ("horizontal", "SOLID", 1, None): {(0, 0)},
+            ("vertical", "SOLID", 1, None): {(0, 0)},
+        }
+        result = _build_borders(edges, 10, 10)
+        assert "horizontal" in result
+        assert "vertical" in result
+
+
+# ----------------------------------------------------------------------------
+# _build_theme
+# ----------------------------------------------------------------------------
+
+class TestBuildTheme:
+    def test_empty(self):
+        theme: gs.SpreadsheetTheme = {}
+        assert _build_theme(theme) == {}
+
+    def test_font_family_only(self):
+        theme: gs.SpreadsheetTheme = {"primaryFontFamily": "Arial"}
+        assert _build_theme(theme) == {"font_family": "Arial"}
+
+    def test_colors_in_canonical_order(self):
+        # Input is shuffled; output should follow the TEXT/BACKGROUND/LINK/ACCENT1..6 order.
+        theme: gs.SpreadsheetTheme = {
+            "themeColors": [
+                {"colorType": "ACCENT3", "color": {"rgbColor": {"red": 0.3}}},
+                {"colorType": "TEXT", "color": {"rgbColor": {}}},
+                {"colorType": "ACCENT1", "color": {"rgbColor": {"red": 1.0}}},
+                {"colorType": "BACKGROUND", "color": {"rgbColor": {"red": 1.0, "green": 1.0, "blue": 1.0}}},
+            ]
+        }
+        result = _build_theme(theme)
+        assert "colors" in result
+        keys = list(result["colors"].keys())
+        assert keys == ["TEXT", "BACKGROUND", "ACCENT1", "ACCENT3"]
+
+    def test_unspecified_color_type_skipped(self):
+        theme: gs.SpreadsheetTheme = {
+            "themeColors": [
+                {"colorType": "THEME_COLOR_TYPE_UNSPECIFIED", "color": {"rgbColor": {}}},
+                {"colorType": "TEXT", "color": {"rgbColor": {}}},
+            ]
+        }
+        result = _build_theme(theme)
+        assert "colors" in result
+        assert list(result["colors"].keys()) == ["TEXT"]
+
+
+# ----------------------------------------------------------------------------
+# _build_merges
+# ----------------------------------------------------------------------------
+
+class TestBuildMerges:
+    def test_empty(self):
+        assert _build_merges([]) == []
+
+    def test_multi_cell_merge(self):
+        merges: list[gs.GridRange] = [
+            {
+                "startRowIndex": 0,
+                "endRowIndex": 1,
+                "startColumnIndex": 0,
+                "endColumnIndex": 3,
+            }
+        ]
+        # Three columns merged across one row.
+        assert _build_merges(merges) == ["A1:C1"]
+
+    def test_rectangle_merge(self):
+        merges: list[gs.GridRange] = [
+            {
+                "startRowIndex": 2,
+                "endRowIndex": 5,
+                "startColumnIndex": 1,
+                "endColumnIndex": 3,
+            }
+        ]
+        assert _build_merges(merges) == ["B3:C5"]
+
+    def test_degenerate_zero_extent_merge_skipped(self):
+        merges: list[gs.GridRange] = [
+            {
+                "startRowIndex": 0,
+                "endRowIndex": 0,
+                "startColumnIndex": 0,
+                "endColumnIndex": 1,
+            }
+        ]
+        assert _build_merges(merges) == []
+
+    def test_sorted_output(self):
+        merges: list[gs.GridRange] = [
+            {"startRowIndex": 5, "endRowIndex": 6, "startColumnIndex": 0, "endColumnIndex": 2},
+            {"startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 2},
+        ]
+        # Earlier rows must come first.
+        result = _build_merges(merges)
+        assert result == ["A1:B1", "A6:B6"]
+
+
+# ----------------------------------------------------------------------------
+# _build_row_meta
+# ----------------------------------------------------------------------------
+
+class TestBuildRowMeta:
+    def test_empty(self):
+        assert _build_row_meta([]) == {}
+
+    def test_default_height_omitted(self):
+        # Default row height is 21 — should produce no entry.
+        rows: list[gs.DimensionProperties] = [{"pixelSize": 21}, {"pixelSize": 21}]
+        assert _build_row_meta(rows) == {}
+
+    def test_non_default_height(self):
+        rows: list[gs.DimensionProperties] = [{"pixelSize": 32}, {"pixelSize": 21}]
+        assert _build_row_meta(rows) == {"0": {"height": 32}}
+
+    def test_hidden(self):
+        rows: list[gs.DimensionProperties] = [{"hiddenByUser": True}]
+        assert _build_row_meta(rows) == {"0": {"hidden": True}}
+
+    def test_height_and_hidden(self):
+        rows: list[gs.DimensionProperties] = [
+            {"pixelSize": 50, "hiddenByUser": True}
+        ]
+        assert _build_row_meta(rows) == {"0": {"height": 50, "hidden": True}}
+
+
+# ----------------------------------------------------------------------------
+# _build_col_meta
+# ----------------------------------------------------------------------------
+
+class TestBuildColMeta:
+    def test_empty(self):
+        assert _build_col_meta([]) == {}
+
+    def test_default_width_omitted(self):
+        cols: list[gs.DimensionProperties] = [{"pixelSize": 100}, {"pixelSize": 100}]
+        assert _build_col_meta(cols) == {}
+
+    def test_non_default_width(self):
+        cols: list[gs.DimensionProperties] = [
+            {"pixelSize": 180},
+            {"pixelSize": 100},
+            {"pixelSize": 120},
+        ]
+        # Column letters as keys.
+        assert _build_col_meta(cols) == {"A": {"width": 180}, "C": {"width": 120}}
+
+    def test_double_letter_column(self):
+        # Position 26 → "AA"
+        default: gs.DimensionProperties = {"pixelSize": 100}
+        wide: gs.DimensionProperties = {"pixelSize": 200}
+        cols: list[gs.DimensionProperties] = [default] * 26 + [wide]
+        result = _build_col_meta(cols)
+        assert "AA" in result
+        assert result["AA"] == {"width": 200}
+
+
+# ----------------------------------------------------------------------------
+# _build_metadata_items
+# ----------------------------------------------------------------------------
+
+class TestBuildMetadataItems:
+    def test_empty(self):
+        assert _build_metadata_items([]) == []
+
+    def test_document_visibility_is_public(self):
+        data: list[gs.DeveloperMetadata] = [
+            {"metadataKey": "owner", "metadataValue": "alice", "visibility": "DOCUMENT"}
+        ]
+        assert _build_metadata_items(data) == [
+            {"key": "owner", "value": "alice", "public": True}
+        ]
+
+    def test_project_visibility_is_private(self):
+        data: list[gs.DeveloperMetadata] = [
+            {"metadataKey": "k", "metadataValue": "v", "visibility": "PROJECT"}
+        ]
+        assert _build_metadata_items(data) == [
+            {"key": "k", "value": "v", "public": False}
+        ]
+
+    def test_sorted_by_key_then_value(self):
+        data: list[gs.DeveloperMetadata] = [
+            {"metadataKey": "b", "metadataValue": "2", "visibility": "PROJECT"},
+            {"metadataKey": "a", "metadataValue": "z", "visibility": "PROJECT"},
+            {"metadataKey": "a", "metadataValue": "a", "visibility": "PROJECT"},
+        ]
+        result = _build_metadata_items(data)
+        keys = [(m["key"], m["value"]) for m in result]
+        # Both "a" entries come first (sorted by value), then "b".
+        assert keys == [("a", "a"), ("a", "z"), ("b", "2")]
+
+    def test_id_field_not_included(self):
+        # Server-assigned metadataId should not appear in the snapshot,
+        # so re-imports don't produce ID-shuffle diffs.
+        data: list[gs.DeveloperMetadata] = [
+            {
+                "metadataId": 12345,
+                "metadataKey": "k",
+                "metadataValue": "v",
+                "visibility": "DOCUMENT",
+            }
+        ]
+        result = _build_metadata_items(data)
+        assert "id" not in result[0]
+        assert "metadataId" not in result[0]

@@ -2,13 +2,10 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from gservices.sheets.utils import color_object_to_string, color_string_to_object
 
-
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
 
-BorderStyle = Literal[
-    None, "DOTTED", "DASHED", "SOLID", "SOLID_MEDIUM", "SOLID_THICK", "DOUBLE"
-]
+BorderStyle = Literal["DOTTED", "DASHED", "SOLID", "SOLID_MEDIUM", "SOLID_THICK", "DOUBLE"] | None
 
 
 class BorderFormat:

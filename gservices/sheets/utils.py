@@ -1,5 +1,6 @@
 import re
-from typing import TYPE_CHECKING, Any, Mapping, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -63,12 +64,12 @@ def color_object_to_string(color_style: gs.ColorStyle | None) -> str | None:
         return color
 
 
-def color_string_to_object(color: str | None) -> "gs.ColorStyle":
+def color_string_to_object(color: str | None) -> gs.ColorStyle:
     if color is None or color == "":
         return {}
     if color.startswith("#"):
         assert len(color) == 9 or len(color) == 7
-        rgb: "gs.Color" = {
+        rgb: gs.Color = {
             "red": _hexstr_to_float(color[1:3]),
             "green": _hexstr_to_float(color[3:5]),
             "blue": _hexstr_to_float(color[5:7]),
@@ -213,12 +214,12 @@ def merge_update_cells(
 
 
 def merge_structs(struct1: dict[str, Any], struct2: dict[str, Any]):
-    for key in struct2:
-        if key in struct1:
-            if isinstance(struct1[key], dict) and isinstance(struct2[key], dict):
-                merge_structs(struct1[key], struct2[key])
-                continue
-        struct1[key] = struct2[key]
+    for key, value in struct2.items():
+        existing = struct1.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merge_structs(existing, value)
+        else:
+            struct1[key] = value
 
 
 def cell_formats_equal(

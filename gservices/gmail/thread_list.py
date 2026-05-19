@@ -1,5 +1,6 @@
-from gservices.gmail.thread import Thread
 from googleapiclient.http import BatchHttpRequest
+
+from gservices.gmail.thread import Thread
 
 
 class ThreadList(list[Thread]):
@@ -12,6 +13,6 @@ class ThreadList(list[Thread]):
         if len(self) > 0:
             batch = BatchHttpRequest()
             for item in self:
-                request, callback = item.batch_load()
-                # batch.add(request, callback=callback)  # type: ignore
+                _request, _callback = item.batch_load()
+                # batch.add(_request, callback=_callback)  # type: ignore
             batch.execute()

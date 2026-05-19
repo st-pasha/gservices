@@ -1,9 +1,11 @@
 from typing import TYPE_CHECKING
+
 from gservices.drive.folder import Folder
 
 if TYPE_CHECKING:
-    from gservices.drive.drive_service import DriveService
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
+
+    from gservices.drive.drive_service import DriveService
 
 
 class UserDrive(Folder):

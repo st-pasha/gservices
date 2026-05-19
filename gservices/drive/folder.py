@@ -1,11 +1,16 @@
 from typing import TYPE_CHECKING, Literal
+
 from gservices.drive.document_file import DocumentFile
 from gservices.drive.file import File
-from gservices.drive.spreadsheet_file import SpreadsheetFile
+
+# `SpreadsheetFile` is imported function-local in `make_file()` to avoid a
+# circular import: spreadsheet.py -> spreadsheet_file.py -> file.py -> folder.py
+# would otherwise try to read SpreadsheetFile from a partially-loaded module.
 
 if TYPE_CHECKING:
-    from gservices.drive.drive_service import DriveService
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
+
+    from gservices.drive.drive_service import DriveService
 
 
 class Folder(File):
@@ -29,10 +34,12 @@ class Folder(File):
         self, name: str, kind: Literal["spreadsheet", "document", "folder"]
     ) -> File:
         """Creates a new file [name] of the given [kind] within this folder."""
+        from gservices.drive.spreadsheet_file import SpreadsheetFile
+
         # fmt: off
         mime_type = (
-            SpreadsheetFile.MIME if kind == "spreadsheet" else 
-            DocumentFile.MIME if kind == "document" else 
+            SpreadsheetFile.MIME if kind == "spreadsheet" else
+            DocumentFile.MIME if kind == "document" else
             Folder.MIME
         )
         # fmt: on

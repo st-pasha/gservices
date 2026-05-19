@@ -16,7 +16,7 @@ class Formula:
 class HyperlinkFormula(Formula):
     def __init__(self, url: str, label: str):
         escaped_label = label.replace('"', '""')
-        if not (url.startswith("http://") or url.startswith("https://")):
+        if not url.startswith(("http://", "https://")):
             url = "http://" + url
         self.url = url
         self.label = label

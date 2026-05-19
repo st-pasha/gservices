@@ -1,6 +1,7 @@
-from typing import TYPE_CHECKING
 import html
 import re
+from typing import TYPE_CHECKING
+
 from googleapiclient.errors import HttpError
 
 if TYPE_CHECKING:
@@ -8,7 +9,7 @@ if TYPE_CHECKING:
 
 
 class Thread:
-    def __init__(self, data: "g.Thread", gmail: "GmailService"):
+    def __init__(self, data: g.Thread, gmail: GmailService):
         self._data = data
         self._gmail = gmail
         self._messages: list[Message] | None = None
@@ -27,7 +28,7 @@ class Thread:
         return self._data.get("snippet", "")
 
     @property
-    def messages(self) -> list["Message"]:
+    def messages(self) -> list[Message]:
         if self._messages is None:
             self.load()
             assert self._messages is not None
@@ -40,7 +41,7 @@ class Thread:
     def batch_load(self):
         return self._load_request(), self._process_load_response
 
-    def _load_request(self) -> "g.ThreadHttpRequest":
+    def _load_request(self) -> g.ThreadHttpRequest:
         return (
             self._gmail.resource.users()
             .threads()
@@ -48,7 +49,7 @@ class Thread:
         )
 
     def _process_load_response(
-        self, id: str, data: "g.Thread", exception: HttpError | None
+        self, id: str, data: g.Thread, exception: HttpError | None
     ) -> None:
         if exception:
             raise exception

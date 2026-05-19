@@ -21,6 +21,10 @@ class File:
 
     @staticmethod
     def resolve_from_mime(data: g.File, service: DriveService) -> File:
+        # Imported here (not at module level) to break the cycle with
+        # spreadsheet_file.py, which itself imports File.
+        from gservices.drive.spreadsheet_file import SpreadsheetFile
+
         mime_type = data.get("mimeType", "")
         if mime_type == Folder.MIME:
             cls = Folder
@@ -82,6 +86,8 @@ class File:
 
     @property
     def is_spreadsheet(self) -> bool:
+        from gservices.drive.spreadsheet_file import SpreadsheetFile
+
         return isinstance(self, SpreadsheetFile)
 
     @property
@@ -271,4 +277,7 @@ from gservices.drive.document_file import DocumentFile
 from gservices.drive.folder import Folder
 from gservices.drive.root import SharedDrive
 from gservices.drive.shortcut import Shortcut
-from gservices.drive.spreadsheet_file import SpreadsheetFile
+
+# SpreadsheetFile isn't imported here because the natural import order
+# (spreadsheet_file -> file) creates a cycle. Methods that need it import
+# locally; see `resolve_from_mime` and `is_spreadsheet`.

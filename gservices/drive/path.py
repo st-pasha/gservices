@@ -63,7 +63,7 @@ class Path:
     def __truediv__(self, other: str) -> Path:
         if other == "..":
             return self.parent
-        return Path(tuple([*self._parts, other]))
+        return Path((*self._parts, other))
 
     def __str__(self) -> str:
         if self.is_root:

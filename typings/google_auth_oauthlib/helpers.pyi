@@ -1,7 +1,8 @@
-from __future__ import annotations
-from requests_oauthlib import OAuth2Session
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from google.oauth2.credentials import Credentials
+from requests_oauthlib import OAuth2Session
 
 def session_from_client_config(
     client_config: Mapping[str, Any], scopes: Sequence[str], **kwargs: Any

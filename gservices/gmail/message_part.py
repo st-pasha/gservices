@@ -1,13 +1,12 @@
-from typing import TYPE_CHECKING
 import base64
-
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import googleapiclient._apis.gmail.v1.resources as g  # type: ignore
 
 
 class MessagePart:
-    def __init__(self, data: "g.MessagePart", message: "Message"):
+    def __init__(self, data: g.MessagePart, message: Message):
         self._data = data
         self._message = message
         self._headers: dict[str, str] = {}

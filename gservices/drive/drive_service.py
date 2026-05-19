@@ -56,7 +56,7 @@ class DriveService:
         path = self._resolve_path(path)
         parent = self.get(path.parent)
         if isinstance(parent, Root):
-            raise ValueError("Cannot create directories within the Root")
+            raise ValueError("Cannot create directories within the Root")  # noqa: TRY004
         if not isinstance(parent, Folder):
             raise NotADirectoryError(
                 f"The parent path `{parent.path}` is not a directory"

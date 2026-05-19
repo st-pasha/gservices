@@ -32,3 +32,18 @@
 
   # Unknown types often occur in external libraries.
   reportUnknownMemberType = false
+
+[tool.ruff]
+  preview = true
+
+  [tool.ruff.lint.per-file-ignores]
+    # The OAuth2Scope literal intentionally lists the same URL multiple times,
+    # grouped under each API it belongs to (Gmail, Drive, Sheets, ...).
+    "gservices/oauth2_scopes.py" = ["PYI062"]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.5",
+    "pytest>=9.0.3",
+    "ruff>=0.15.13",
+]

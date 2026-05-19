@@ -1,15 +1,13 @@
-import re
-from typing import TYPE_CHECKING, Iterator
 import warnings
-
-# from bs4 import BeautifulSoup
+from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import googleapiclient._apis.gmail.v1.resources as g  # type: ignore
 
 
 class Message:
-    def __init__(self, data: "g.Message", gmail: "GmailService"):
+    def __init__(self, data: g.Message, gmail: GmailService):
         self._data = data
         self._gmail = gmail
         self._headers: dict[str, str] = {}
@@ -55,7 +53,7 @@ class Message:
         return self._data.get("labelIds", [])
 
     @property
-    def attachments(self) -> list["MessagePart"]:
+    def attachments(self) -> list[MessagePart]:
         return self._attachments
 
     def email_list_repr(self, full: bool = True) -> str:
@@ -76,7 +74,7 @@ class Message:
         else:
             return f"[{self.id}] {self.subject}"
 
-    def _process_payload(self, payload: "g.MessagePart"):
+    def _process_payload(self, payload: g.MessagePart):
         for part in self._process_part(payload):
             if not self._headers:
                 self._headers = part.headers
@@ -93,10 +91,14 @@ class Message:
             else:
                 self._attachments.append(part)
         if self._html and not self._text:
-            soup = BeautifulSoup(self._html, "html.parser")
-            self._text = re.sub(r"\n{3,}", "\n\n", soup.get_text().strip())
+            # HTML-to-text conversion requires bs4, which isn't a project
+            # dependency. Add `beautifulsoup4` to dependencies and uncomment
+            # the import at the top of the file to enable this path.
+            raise NotImplementedError(
+                "HTML-only messages need bs4 to extract text; install beautifulsoup4."
+            )
 
-    def _process_part(self, data: "g.MessagePart") -> Iterator["MessagePart"]:
+    def _process_part(self, data: g.MessagePart) -> Iterator[MessagePart]:
         yield MessagePart(data, self)
         for part in data.get("parts", []):
             yield from self._process_part(part)
@@ -105,7 +107,7 @@ class Message:
         return self.email_list_repr()
 
     @property
-    def resource(self) -> "g.GmailResource":
+    def resource(self) -> g.GmailResource:
         return self._gmail.resource
 
 

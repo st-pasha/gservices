@@ -1,6 +1,7 @@
 import json
 import pathlib
-from typing import Any, Protocol, Sequence, cast
+from collections.abc import Sequence
+from typing import Any, Protocol, cast
 
 from google.auth.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -10,8 +11,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 lazy from gservices.drive.drive_service import DriveService
 lazy from gservices.gmail.gmail_service import GmailService
-lazy from gservices.sheets.sheets_service import SheetsService
 lazy from gservices.oauth2_scopes import OAuth2Scope
+lazy from gservices.sheets.sheets_service import SheetsService
 
 
 class GoogleServices:

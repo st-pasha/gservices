@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
+
     from gservices.sheets.cell import Cell
 
 
@@ -222,7 +223,7 @@ class CellFormat:
     def border_top(self, value: BorderFormat | None) -> None:
         if value == self.border_top:
             return
-        obj: "gs.Border" = {} if value is None else value.to_data()
+        obj: gs.Border = {} if value is None else value.to_data()
         self._set_property("borders.top", obj)
 
     @property
@@ -235,7 +236,7 @@ class CellFormat:
     def border_right(self, value: BorderFormat | None) -> None:
         if value == self.border_right:
             return
-        obj: "gs.Border" = {} if value is None else value.to_data()
+        obj: gs.Border = {} if value is None else value.to_data()
         self._set_property("borders.right", obj)
 
     @property
@@ -304,10 +305,10 @@ class CellFormat:
         return text_format
 
 
+from gservices.print_utils import pprint
 from gservices.sheets.border_format import BorderFormat
 from gservices.sheets.utils import (
     color_object_to_string,
     color_string_to_object,
     set_dotted_property,
 )
-from gservices.print_utils import pprint

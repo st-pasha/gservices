@@ -1,10 +1,12 @@
 from typing import TYPE_CHECKING
+
 from gservices.drive.file import File
 from gservices.drive.path import Path
 
 if TYPE_CHECKING:
-    from gservices.drive.drive_service import DriveService
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
+
+    from gservices.drive.drive_service import DriveService
 
 
 class Shortcut(File):
@@ -42,7 +44,7 @@ class Shortcut(File):
 
     @property
     def is_broken(self) -> bool:
-        self.target  # Force checking that the target exists
+        _ = self.target  # Access the property for its side effect (checks target exists)
         return self._broken
 
     def file_list_repr(self, use_colors: bool = True) -> str:

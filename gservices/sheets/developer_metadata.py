@@ -1,6 +1,6 @@
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterator, override
-
+from typing import TYPE_CHECKING, override
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -64,12 +64,13 @@ class DeveloperMetadata:
 
     def _add_callback(self, response: gs.Response) -> None:
         assert "createDeveloperMetadata" in response, f"Unexpected response: {response}"
-        if datum := response["createDeveloperMetadata"].get("developerMetadata", None):
-            if key := datum.get("metadataKey", None):
-                for i, item in enumerate(self._data):
-                    if item.get("metadataKey") == key:
-                        self._data[i] = datum
-                        break
+        if (
+            datum := response["createDeveloperMetadata"].get("developerMetadata", None)
+        ) and (key := datum.get("metadataKey", None)):
+            for i, item in enumerate(self._data):
+                if item.get("metadataKey") == key:
+                    self._data[i] = datum
+                    break
 
     def _get_location(self) -> gs.DeveloperMetadataLocation:
         raise NotImplementedError()
@@ -136,8 +137,8 @@ class MetadataItem:
     value: str
 
 
-from gservices.sheets.spreadsheet import Spreadsheet
-from gservices.sheets.sheet import Sheet
-from gservices.sheets.row import Row
-from gservices.sheets.column import Column
 from gservices.print_utils import pprint
+from gservices.sheets.column import Column
+from gservices.sheets.row import Row
+from gservices.sheets.sheet import Sheet
+from gservices.sheets.spreadsheet import Spreadsheet

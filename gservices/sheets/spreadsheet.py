@@ -1,5 +1,6 @@
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -157,27 +158,27 @@ class Spreadsheet:
         return file
 
     def print(self):
-        pprint(f"[bold cyan]Spreadsheet:")
+        pprint("[bold cyan]Spreadsheet:")
         pprint(f"  [green]title:[/] [bold white]{self.title}")
         pprint(f"  [green]id:[/] {self.id}")
         pprint(f"  [green]url:[/] {self.url}")
         pprint(f"  [green]locale:[/] {self.locale}")
         pprint(f"  [green]time_zone:[/] {self.time_zone}")
-        pprint(f"  [green]theme:[/]")
+        pprint("  [green]theme:[/]")
         pprint(f"    [green]font_family:[/] {self.theme.get('primaryFontFamily')}")
-        pprint(f"    [green]colors:[/]")
+        pprint("    [green]colors:[/]")
         for record in self.theme.get("themeColors", []):
             color = color_object_to_string(record.get("color", {}))
             pprint(f"      [green]{record.get('colorType')}:[/] {color}")
-        pprint(f"  [green]cell_format:")
+        pprint("  [green]cell_format:")
         self.default_cell_format.print(indent="    ")
-        pprint(f"  [green]sheets:")
+        pprint("  [green]sheets:")
         for sheet in self.sheets:
             pprint(
                 f"    [magenta not bold]\\[{sheet.index}][/]: "
                 f"[bold white]{sheet.title}[/], id={sheet.id}"
             )
-        pprint(f"  [green]metadata:")
+        pprint("  [green]metadata:")
         self.metadata.print(indent="    ")
 
     # ----------------------------------------------------------------------------------
@@ -339,6 +340,7 @@ class Spreadsheet:
 
 
 from gservices.drive.spreadsheet_file import SpreadsheetFile
+from gservices.print_utils import pprint
 from gservices.sheets.cell_format import CellFormat
 from gservices.sheets.developer_metadata import SpreadsheetDeveloperMetadata
 from gservices.sheets.sheet import Sheet
@@ -348,4 +350,3 @@ from gservices.sheets.utils import (
     merge_requests,
     set_dotted_property,
 )
-from gservices.print_utils import pprint

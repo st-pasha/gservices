@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any, Literal, Sequence, cast
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -191,7 +192,7 @@ class Sheet:
         self._set_property("gridProperties.hideGridlines", value)
 
     def print(self):
-        pprint(f"[bold cyan]Sheet:")
+        pprint("[bold cyan]Sheet:")
         pprint(f"  [green]title:[/] [bold white]{self.title}")
         pprint(f"  [green]id:[/] {self.id}")
         pprint(f"  [green]index:[/] {self.index}")
@@ -210,7 +211,7 @@ class Sheet:
             nrows = "?"
             ncols = "?"
         pprint(f"  [green]data:[/] \\[{nrows} x {ncols}]")
-        pprint(f"  [green]metadata:")
+        pprint("  [green]metadata:")
         self.metadata.print(indent="    ")
 
     # ----------------------------------------------------------------------------------
@@ -515,6 +516,7 @@ class Sheet:
         assert self.frozen_column_count <= self.max_column_count
 
 
+from gservices.print_utils import pprint
 from gservices.sheets.cell import Cell
 from gservices.sheets.columns import Columns
 from gservices.sheets.developer_metadata import SheetDeveloperMetadata
@@ -526,4 +528,3 @@ from gservices.sheets.utils import (
     color_string_to_object,
     set_dotted_property,
 )
-from gservices.print_utils import pprint

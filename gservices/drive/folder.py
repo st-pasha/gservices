@@ -1,11 +1,13 @@
 from typing import TYPE_CHECKING, Literal
+
 from gservices.drive.document_file import DocumentFile
 from gservices.drive.file import File
 from gservices.drive.spreadsheet_file import SpreadsheetFile
 
 if TYPE_CHECKING:
-    from gservices.drive.drive_service import DriveService
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
+
+    from gservices.drive.drive_service import DriveService
 
 
 class Folder(File):

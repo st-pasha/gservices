@@ -1,6 +1,6 @@
-from __future__ import annotations
+from collections.abc import Sequence
+
 from google.oauth2.credentials import Credentials
-from typing import Sequence
 
 LOCALHOST: str
 DEFAULT_PORTS_TO_TRY: int

@@ -1,4 +1,5 @@
-from typing import Any, Iterator, Callable
+from collections.abc import Callable, Iterator
+from typing import Any
 
 
 class Rows:
@@ -120,9 +121,8 @@ class Rows:
     def _handle_row_removed(self, removed_index: int) -> None:
         if self._nrows is not None:
             self._nrows -= 1
-        if self._iter_index is not None:
-            if removed_index <= self._iter_index:
-                self._iter_index -= 1
+        if self._iter_index is not None and removed_index <= self._iter_index:
+            self._iter_index -= 1
         if self._rows is not None:
             del self._rows[removed_index]
             for row in self._rows:
@@ -132,9 +132,8 @@ class Rows:
     def _handle_row_inserted(self, inserted_index: int) -> None:
         if self._nrows is not None:
             self._nrows += 1
-        if self._iter_index is not None:
-            if inserted_index <= self._iter_index:
-                self._iter_index += 1
+        if self._iter_index is not None and inserted_index <= self._iter_index:
+            self._iter_index += 1
         if self._rows is not None:
             self._rows.insert(inserted_index, None)
             for row in self._rows:

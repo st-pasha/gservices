@@ -5,7 +5,7 @@ if TYPE_CHECKING:
 
 
 class Label:
-    def __init__(self, data: "g.Label", gmail: GmailService):
+    def __init__(self, data: g.Label, gmail: GmailService):
         self._data = data
         self._service = gmail
 

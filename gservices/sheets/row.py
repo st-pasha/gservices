@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Any, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -127,9 +128,8 @@ class Row:
         self._sheet._load_data()
         grid_data = self._sheet._cell_data
         assert grid_data is not None
-        if row_list := grid_data.get("rowMetadata"):
-            if self._index < len(row_list):
-                return row_list[self._index]
+        if (row_list := grid_data.get("rowMetadata")) and self._index < len(row_list):
+            return row_list[self._index]
         return {}
 
     def _set_property(self, property: str, value: Any) -> None:

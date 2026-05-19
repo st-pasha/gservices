@@ -1,5 +1,7 @@
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal, Mapping, Sequence, Type, TypeVar
+from typing import Any, Literal, Self
+
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.credentials import Credentials
 from requests_oauthlib import OAuth2Session
@@ -22,18 +24,18 @@ class Flow:
     ) -> None: ...
     @classmethod
     def from_client_config(
-        cls: Type[_T],
+        cls,
         client_config: Mapping[str, Any],
         scopes: Sequence[str],
         **kwargs: Any,
-    ) -> _T: ...
+    ) -> Self: ...
     @classmethod
     def from_client_secrets_file(
-        cls: Type[_T],
+        cls,
         client_secrets_file: str | Path,
         scopes: Sequence[str],
         **kwargs: Any,
-    ) -> _T: ...
+    ) -> Self: ...
     @property
     def redirect_uri(self) -> str | None: ...
     @redirect_uri.setter
@@ -59,5 +61,3 @@ class InstalledAppFlow(Flow):
         browser: str | None = None,
         **kwargs: Any,
     ) -> Credentials: ...
-
-_T = TypeVar("_T", bound="Flow")

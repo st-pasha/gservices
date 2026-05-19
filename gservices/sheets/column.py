@@ -47,9 +47,10 @@ class Column:
         self._sheet._load_data()
         grid_data = self._sheet._cell_data
         assert grid_data is not None
-        if column_list := grid_data.get("columnMetadata"):
-            if self._index < len(column_list):
-                return column_list[self._index]
+        if (column_list := grid_data.get("columnMetadata")) and self._index < len(
+            column_list
+        ):
+            return column_list[self._index]
         return {}
 
     def _set_property(self, property: str, value: Any) -> None:

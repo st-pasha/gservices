@@ -1,6 +1,5 @@
 from typing import Literal
 
-
 # List of scopes from https://developers.google.com/identity/protocols/oauth2/scopes
 OAuth2Scope = Literal[
     # ----------------------------------------------------------------------------------

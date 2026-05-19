@@ -55,7 +55,7 @@ class Cell:
         self._sheet._handle_cell_value_changed(self._row, self._column, vv)
 
     @property
-    def user_entered_value(self) -> "CellValue":
+    def user_entered_value(self) -> CellValue:
         """
         The value the user entered in the cell. e.g., 1234, 'Hello', or `=NOW()`.
         Note: Dates, Times and DateTimes are represented as doubles in serial number
@@ -64,7 +64,7 @@ class Cell:
         return value_to_python(self._data.get("userEnteredValue"))
 
     @property
-    def effective_value(self) -> "CellValue":
+    def effective_value(self) -> CellValue:
         """
         The effective value of the cell. For cells with formulas, this is the
         calculated value. For cells with literals, this is the same as the
@@ -121,7 +121,7 @@ class Cell:
             i = indent
         else:
             i = "  "
-            pprint(f"[bold cyan]Cell:")
+            pprint("[bold cyan]Cell:")
         pprint(f"{i}[green]user_entered_value:[/] {self.user_entered_value}")
         pprint(f"{i}[green]effective_value:[/] {self.effective_value}")
         pprint(f"{i}[green]formatted_value:[/] {self.formatted_value}")
@@ -147,6 +147,7 @@ class Cell:
         })
 
 
+from gservices.print_utils import pprint
 from gservices.sheets.cell_format import CellFormat
 from gservices.sheets.cell_value import (
     CellValue,
@@ -156,8 +157,7 @@ from gservices.sheets.cell_value import (
 )
 from gservices.sheets.sheet import Sheet
 from gservices.sheets.utils import (
-    coords_to_address,
     cell_formats_equal,
+    coords_to_address,
     set_dotted_property,
 )
-from gservices.print_utils import pprint

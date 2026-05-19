@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING, Generator, Sequence
+from collections.abc import Generator, Sequence
+from typing import TYPE_CHECKING
 
 from googleapiclient.discovery import build  # type: ignore
 
@@ -8,7 +9,7 @@ if TYPE_CHECKING:
 
 
 class GmailService:
-    def __init__(self, resource: "g.GmailResource"):
+    def __init__(self, resource: g.GmailResource):
         self._resource = resource
         self._labels: list[Label] | None = None
         self._label_map: dict[str, Label] = {}
@@ -16,7 +17,7 @@ class GmailService:
         self._thread_cache: dict[str, Thread] = {}
 
     @staticmethod
-    def build(credentials: "Credentials") -> GmailService:
+    def build(credentials: Credentials) -> GmailService:
         resource = build("gmail", "v1", credentials=credentials)
         return GmailService(resource)
 
@@ -26,7 +27,7 @@ class GmailService:
 
     def read(
         self, query: str = "", labels: Sequence[Label] = ()
-    ) -> Generator[Thread, None, None]:
+    ) -> Generator[Thread]:
         """
         Reads a list of threads that match the [query] or have one of the [labels]
         applied, and returns them as an iterator.
@@ -89,7 +90,7 @@ class GmailService:
             self._label_map[label.name] = label
 
     @property
-    def resource(self) -> "g.GmailResource":
+    def resource(self) -> g.GmailResource:
         return self._resource
 
 

@@ -32,3 +32,10 @@
 
   # Unknown types often occur in external libraries.
   reportUnknownMemberType = false
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.5",
+    "pytest>=9.0.3",
+    "ruff>=0.15.13",
+]

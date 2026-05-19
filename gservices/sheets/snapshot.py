@@ -356,8 +356,7 @@ def _build_sheet(
     for ri, row in enumerate(rows_data):
         row_obj = cast("gs.RowData", row)
         values = row_obj.get("values", [])
-        for ci, cv_any in enumerate(values):
-            cv = cast("gs.CellData", cv_any)
+        for ci, cv in enumerate(values):
             has_content = False
 
             uev = cv.get("userEnteredValue")

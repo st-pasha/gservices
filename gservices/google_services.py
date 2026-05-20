@@ -9,10 +9,10 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-lazy from gservices.drive.drive_service import DriveService
-lazy from gservices.gmail.gmail_service import GmailService
-lazy from gservices.oauth2_scopes import OAuth2Scope
-lazy from gservices.sheets.sheets_service import SheetsService
+from gservices.drive.drive_service import DriveService
+from gservices.gmail.gmail_service import GmailService
+from gservices.oauth2_scopes import OAuth2Scope
+from gservices.sheets.sheets_service import SheetsService
 
 
 class GoogleServices:

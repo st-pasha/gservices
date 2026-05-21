@@ -268,11 +268,92 @@ class TestDataLayer:
         data = snap["sheets"][0].get("data") or []
         assert data[1][2] == "=42*2"
 
-    def test_data_padded_to_uniform_width(self, rich_spreadsheet: Spreadsheet):
-        snap = rich_spreadsheet.snapshot()
-        data = snap["sheets"][0].get("data") or []
-        widths = {len(row) for row in data}
-        assert len(widths) == 1
+    def test_trailing_nulls_trimmed_per_row(self):
+        # A row with content at A and C but nothing at B, D, E should produce
+        # `[1, null, 3]` — the trailing nulls beyond C are trimmed.
+        data: dict[str, Any] = {
+            "spreadsheetId": "T",
+            "properties": {
+                "title": "T", "locale": "en_US", "timeZone": "UTC",
+                "defaultFormat": {"textFormat": _arial_10()},
+            },
+            "sheets": [{
+                "properties": {
+                    "sheetId": 0, "title": "S", "index": 0,
+                    "gridProperties": {"rowCount": 100, "columnCount": 5},
+                },
+                "data": [{
+                    "rowData": [
+                        {"values": [
+                            {"userEnteredValue": {"numberValue": 1}},
+                            {},
+                            {"userEnteredValue": {"numberValue": 3}},
+                            {},
+                            {},
+                        ]},
+                        # Row 1 establishes a wider data extent so cols D, E
+                        # are part of `max_col_seen` — the trim is what removes
+                        # them from row 0.
+                        {"values": [
+                            {"userEnteredValue": {"numberValue": 10}},
+                            {"userEnteredValue": {"numberValue": 20}},
+                            {"userEnteredValue": {"numberValue": 30}},
+                            {"userEnteredValue": {"numberValue": 40}},
+                            {"userEnteredValue": {"numberValue": 50}},
+                        ]},
+                    ],
+                    "rowMetadata": [{}, {}], "columnMetadata": [{}] * 5,
+                }],
+            }],
+        }
+        snap = _make_spreadsheet(data).snapshot()
+        assert snap["sheets"][0].get("data") == [
+            [1, None, 3],
+            [10, 20, 30, 40, 50],
+        ]
+
+    def test_trailing_empty_rows_trimmed(self):
+        # Rows that only contributed formatting (no value) become [] after
+        # the trailing-null trim. If they sit at the end of `data`, drop them.
+        bold = {"textFormat": {**_arial_10(), "bold": True}}
+        data: dict[str, Any] = {
+            "spreadsheetId": "T",
+            "properties": {
+                "title": "T", "locale": "en_US", "timeZone": "UTC",
+                "defaultFormat": {"textFormat": _arial_10()},
+            },
+            "sheets": [{
+                "properties": {
+                    "sheetId": 0, "title": "S", "index": 0,
+                    "gridProperties": {"rowCount": 100, "columnCount": 5},
+                },
+                "data": [{
+                    "rowData": [
+                        {"values": [
+                            {"userEnteredValue": {"stringValue": "first"}},
+                        ]},
+                        # An empty middle row stays — preserves visual table shape.
+                        {"values": [{}]},
+                        {"values": [
+                            {"userEnteredValue": {"stringValue": "third"}},
+                        ]},
+                        # Trailing rows: format-only (no value). After the
+                        # per-row null trim each becomes [], and being at the
+                        # end of the array, they should be dropped entirely.
+                        {"values": [{"effectiveFormat": bold}]},
+                        {"values": [{"effectiveFormat": bold}]},
+                    ],
+                    "rowMetadata": [{}, {}, {}, {}, {}],
+                    "columnMetadata": [{}],
+                }],
+            }],
+        }
+        snap = _make_spreadsheet(data).snapshot()
+        assert snap["sheets"][0].get("data") == [
+            ["first"],
+            [],
+            ["third"],
+        ]
 
 
 class TestFormulasMarker:

@@ -423,8 +423,17 @@ def _build_sheet(
             row_arr: list[CellValueJSON] = []
             for ci in range(data_cols):
                 row_arr.append(cell_values.get((ri, ci)))
+            # Trim trailing nulls — produces ragged rows but keeps the file compact.
+            while row_arr and row_arr[-1] is None:
+                row_arr.pop()
             data_array.append(row_arr)
-        result["data"] = data_array
+        # Trim trailing rows that are now completely empty (a row whose only
+        # contribution was a format / border / note remains "seen" but its
+        # cell-values row is []; if those rows are at the end, drop them).
+        while data_array and not data_array[-1]:
+            data_array.pop()
+        if data_array:
+            result["data"] = data_array
 
     merges = _build_merges(_sheet_merges_raw(sheet))
     if merges:

@@ -213,8 +213,11 @@ def build_snapshot(
     """
     Builds an in-memory snapshot of the spreadsheet's current state.
 
-    Triggers a full grid load on each sheet if cell data hasn't been loaded yet.
+    If any sheet's grid data isn't loaded yet, all of them are fetched in a
+    single batched API call — important for spreadsheets with many sheets,
+    where serial per-sheet loads would otherwise dominate the wall time.
     """
+    spreadsheet._load_all_data()  # type: ignore[reportPrivateUsage]
     sheet_snaps = [
         _build_sheet(sheet, spreadsheet, include_computed)
         for sheet in spreadsheet.sheets

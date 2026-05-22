@@ -40,6 +40,27 @@ class Spreadsheet:
         self._pending_updates: list[gs.Request] = []
         self._pending_callbacks: list[Callable[[gs.Response], None] | None] = []
 
+    def _load_all_data(self) -> None:
+        """Loads cell data for every sheet that doesn't yet have it, in a
+        single API call. Much faster than letting each sheet hit the API
+        independently when the spreadsheet has many sheets."""
+        missing = [sheet for sheet in self._sheets if sheet._cell_data is None]
+        if not missing:
+            return
+        data = (
+            self._service.resource.spreadsheets()
+            .get(spreadsheetId=self._id, includeGridData=True)
+            .execute()
+        )
+        by_id = {sheet.id: sheet for sheet in self._sheets}
+        for sheet_data in data.get("sheets", []):
+            sheet_id = sheet_data.get("properties", {}).get("sheetId")
+            sheet = by_id.get(sheet_id)
+            if sheet is not None and sheet._cell_data is None:
+                blocks = sheet_data.get("data", [])
+                if blocks:
+                    sheet._cell_data = blocks[0]
+
     def save(self) -> None:
         """
         Saves any pending changes to the spreadsheet file stored in Google Cloud.

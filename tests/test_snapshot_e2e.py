@@ -219,6 +219,86 @@ class TestRoundTripStability:
 
 
 # ----------------------------------------------------------------------------
+# Batch-load: one API call per snapshot, not one per sheet
+# ----------------------------------------------------------------------------
+
+class TestBatchLoad:
+    def _spreadsheet_metadata_only(self, sheet_count: int) -> dict[str, Any]:
+        """Build a spreadsheet response with N sheets but NO grid data, as if
+        opened with `load=False`. Each sheet's `_cell_data` will be None."""
+        return {
+            "spreadsheetId": "MULTI",
+            "properties": {
+                "title": "Multi", "locale": "en_US", "timeZone": "UTC",
+                "defaultFormat": {"textFormat": _arial_10()},
+            },
+            "sheets": [
+                {
+                    "properties": {
+                        "sheetId": i,
+                        "title": f"S{i}",
+                        "index": i,
+                        "gridProperties": {"rowCount": 10, "columnCount": 5},
+                    },
+                    # Deliberately omit "data" so sheet._cell_data stays None.
+                }
+                for i in range(sheet_count)
+            ],
+        }
+
+    def _service_returning_full_data(self, sheet_count: int) -> MagicMock:
+        """Build a mock service whose `spreadsheets().get(...).execute()` returns
+        a single dict containing grid data for every sheet."""
+        full_response: dict[str, Any] = {
+            "spreadsheetId": "MULTI",
+            "sheets": [
+                {
+                    "properties": {"sheetId": i, "title": f"S{i}", "index": i},
+                    "data": [{
+                        "rowData": [{"values": [
+                            {"userEnteredValue": {"numberValue": i}}
+                        ]}],
+                        "rowMetadata": [{}],
+                        "columnMetadata": [{}],
+                    }],
+                }
+                for i in range(sheet_count)
+            ],
+        }
+        service = MagicMock()
+        service.resource.spreadsheets.return_value.get.return_value.execute.return_value = (
+            full_response
+        )
+        return service
+
+    def test_snapshot_uses_one_api_call_for_many_sheets(self):
+        # Construct a Spreadsheet manually so we control its service mock.
+        from gservices.sheets.spreadsheet import Spreadsheet
+        data = self._spreadsheet_metadata_only(sheet_count=5)
+        service = self._service_returning_full_data(sheet_count=5)
+        spreadsheet = Spreadsheet(cast("gs.Spreadsheet", data), service)
+
+        spreadsheet.snapshot()
+
+        # The fix-under-test: one call total to `.get()`, not five.
+        get = service.resource.spreadsheets.return_value.get
+        assert get.call_count == 1
+        # And it requested includeGridData=True.
+        _, kwargs = get.call_args
+        assert kwargs.get("includeGridData") is True
+
+    def test_skip_api_call_if_all_sheets_preloaded(
+        self, minimal_spreadsheet: Spreadsheet
+    ):
+        # `minimal_spreadsheet` has `_cell_data` populated for its single sheet,
+        # so no fetch should happen.
+        minimal_spreadsheet.snapshot()
+        service = minimal_spreadsheet._service  # type: ignore[reportPrivateUsage]
+        get = cast(Any, service.resource.spreadsheets).return_value.get
+        assert get.call_count == 0
+
+
+# ----------------------------------------------------------------------------
 # Schema-level structure
 # ----------------------------------------------------------------------------
 

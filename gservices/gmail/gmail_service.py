@@ -18,7 +18,11 @@ class GmailService:
 
     @staticmethod
     def build(credentials: Credentials) -> GmailService:
-        resource = build("gmail", "v1", credentials=credentials)
+        from gservices.json_model import OrjsonModel
+
+        resource = build(
+            "gmail", "v1", credentials=credentials, model=OrjsonModel()
+        )
         return GmailService(resource)
 
     # ----------------------------------------------------------------------------------

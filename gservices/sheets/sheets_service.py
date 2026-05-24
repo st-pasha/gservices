@@ -12,7 +12,11 @@ class SheetsService:
     def build(credentials: Credentials, google: GoogleServices) -> SheetsService:
         from googleapiclient.discovery import build  # type: ignore
 
-        resource = build("sheets", "v4", credentials=credentials)
+        from gservices.json_model import OrjsonModel
+
+        resource = build(
+            "sheets", "v4", credentials=credentials, model=OrjsonModel()
+        )
         return SheetsService(resource, google)
 
     def open(

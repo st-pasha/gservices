@@ -13,7 +13,8 @@
     "google-api-python-client>=2.151.0",
     "google-api-python-client-stubs>=1.28.0",
     "google-auth-oauthlib>=1.2.1",
-  ]
+    "orjson>=3.11.9",
+]
   keywords = []
   name = "gservices"
   readme = "README.md"

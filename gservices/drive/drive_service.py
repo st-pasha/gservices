@@ -27,7 +27,11 @@ class DriveService:
 
     @staticmethod
     def build(credentials: Credentials) -> DriveService:
-        resource = build("drive", "v3", credentials=credentials)
+        from gservices.json_model import OrjsonModel
+
+        resource = build(
+            "drive", "v3", credentials=credentials, model=OrjsonModel()
+        )
         return DriveService(resource)
 
     # ----------------------------------------------------------------------------------

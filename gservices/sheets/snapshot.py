@@ -348,7 +348,9 @@ def _build_sheet(
 
     cell_values: dict[tuple[int, int], CellValueJSON] = {}
     formula_cells: set[tuple[int, int]] = set()
-    format_groups: dict[str, tuple[CellFormatSnapshot, set[tuple[int, int]]]] = {}
+    format_groups: dict[
+        tuple[Any, ...], tuple[CellFormatSnapshot, set[tuple[int, int]]]
+    ] = {}
     border_edges: dict[
         tuple[str, str, int, str | None], set[tuple[int, int]]
     ] = {}
@@ -382,7 +384,7 @@ def _build_sheet(
 
             fmt_snap = _extract_cell_format(eff_fmt, default_format)
             if fmt_snap:
-                key = json.dumps(fmt_snap, sort_keys=True, ensure_ascii=False)
+                key = _fmt_key(fmt_snap)
                 slot = format_groups.get(key)
                 if slot is None:
                     format_groups[key] = (fmt_snap, {(ri, ci)})
@@ -627,6 +629,21 @@ def _serial_to_iso(serial: float, nf_type: str) -> str:
 # ============================================================================
 # Cell format extraction
 # ============================================================================
+
+def _fmt_key(fmt_snap: CellFormatSnapshot) -> tuple[Any, ...]:
+    """Hashable fingerprint of a CellFormatSnapshot for cell-grouping.
+
+    `json.dumps(..., sort_keys=True)` produces a valid key but is ~30× slower
+    than building a tuple of sorted items; with hundreds of thousands of
+    formatted cells in a snapshot, the difference is seconds. The only
+    list-valued field in the snapshot is `padding` — convert it to a tuple
+    so the whole structure is hashable.
+    """
+    return tuple(
+        (k, tuple(cast(list[Any], v)) if isinstance(v, list) else v)
+        for k, v in sorted(fmt_snap.items())
+    )
+
 
 def _extract_cell_format(
     fmt: gs.CellFormat,

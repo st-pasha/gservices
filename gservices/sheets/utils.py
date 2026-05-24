@@ -45,18 +45,36 @@ def address_to_coords(addr: str) -> tuple[int, int]:
     return (row - 1, col - 1)
 
 
+# Cache hex strings keyed by (red, green, blue, alpha). Spreadsheet snapshots
+# can call this function millions of times for a heavily-formatted document,
+# but distinct color values are typically in the low dozens — the cache is
+# tiny and the hit rate near 100%.
+_RGB_CACHE: dict[tuple[float, float, float, float], str] = {}
+
+
 def color_object_to_string(color_style: gs.ColorStyle | None) -> str | None:
     if color_style is None:
         return None
     if "rgbColor" in color_style:
         rgb = color_style["rgbColor"]
-        red = _float_to_hexstr(rgb.get("red", 0))
-        green = _float_to_hexstr(rgb.get("green", 0))
-        blue = _float_to_hexstr(rgb.get("blue", 0))
-        alpha = _float_to_hexstr(rgb.get("alpha", 1))
+        key = (
+            rgb.get("red", 0),
+            rgb.get("green", 0),
+            rgb.get("blue", 0),
+            rgb.get("alpha", 1),
+        )
+        cached = _RGB_CACHE.get(key)
+        if cached is not None:
+            return cached
+        red = _float_to_hexstr(key[0])
+        green = _float_to_hexstr(key[1])
+        blue = _float_to_hexstr(key[2])
+        alpha = _float_to_hexstr(key[3])
         if alpha == "ff":
             alpha = ""
-        return f"#{red}{green}{blue}{alpha}"
+        result = f"#{red}{green}{blue}{alpha}"
+        _RGB_CACHE[key] = result
+        return result
     if "themeColor" in color_style:
         color = color_style["themeColor"]
         if color == "THEME_COLOR_TYPE_UNSPECIFIED":

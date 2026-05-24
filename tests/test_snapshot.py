@@ -32,6 +32,7 @@ from gservices.sheets.snapshot import (
     _range_sort_key,
     _serial_to_iso,
 )
+from gservices.sheets.utils import _RGB_CACHE, color_object_to_string
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -227,6 +228,49 @@ class TestEncodeCellValue:
 # ----------------------------------------------------------------------------
 # _number_format_string
 # ----------------------------------------------------------------------------
+
+class TestColorObjectToString:
+    """Direct tests for the cached `color_object_to_string`."""
+
+    def test_none(self):
+        assert color_object_to_string(None) is None
+
+    def test_rgb_red(self):
+        assert color_object_to_string({"rgbColor": {"red": 1.0}}) == "#ff0000"
+
+    def test_rgb_with_alpha(self):
+        result = color_object_to_string(
+            {"rgbColor": {"red": 1.0, "alpha": 0.5}}
+        )
+        # alpha != 1 → 4th byte present (0.5 * 255 + 0.1 → 127 → 7f)
+        assert result == "#ff00007f"
+
+    def test_rgb_full_opaque_strips_alpha(self):
+        # alpha == 1 → "ff" suffix is stripped for a 6-char hex.
+        assert color_object_to_string(
+            {"rgbColor": {"red": 0, "green": 0, "blue": 0, "alpha": 1}}
+        ) == "#000000"
+
+    def test_theme_color(self):
+        assert color_object_to_string({"themeColor": "ACCENT1"}) == "ACCENT1"
+
+    def test_theme_unspecified(self):
+        assert color_object_to_string(
+            {"themeColor": "THEME_COLOR_TYPE_UNSPECIFIED"}
+        ) is None
+
+    def test_distinct_dicts_same_content_share_cache_entry(self):
+        # The cache deduplicates by VALUE, not identity. Two equal-but-distinct
+        # dicts should produce the same string AND only add one cache entry.
+        _RGB_CACHE.clear()
+        d1: gs.ColorStyle = {"rgbColor": {"red": 0.5, "green": 0.25, "blue": 0.75}}
+        d2: gs.ColorStyle = {"rgbColor": {"red": 0.5, "green": 0.25, "blue": 0.75}}
+        assert d1 is not d2
+        s1 = color_object_to_string(d1)
+        s2 = color_object_to_string(d2)
+        assert s1 == s2
+        assert len(_RGB_CACHE) == 1
+
 
 class TestNumberFormatString:
     def test_none(self):

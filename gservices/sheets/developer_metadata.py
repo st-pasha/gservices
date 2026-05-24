@@ -41,6 +41,7 @@ class DeveloperMetadata:
                 "dataFilter": {"developerMetadataLookup": lookup}
             }
         })
+        del self._data[index]
 
     def __repr__(self) -> str:
         if len(self) <= 5:

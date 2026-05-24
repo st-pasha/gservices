@@ -9,6 +9,7 @@ from gservices.drive.file_list import FileList
 from gservices.drive.folder import Folder
 from gservices.drive.path import Path
 from gservices.drive.root import Root, UserDrive
+from gservices.json_model import OrjsonModel
 
 if TYPE_CHECKING:
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
@@ -27,7 +28,9 @@ class DriveService:
 
     @staticmethod
     def build(credentials: Credentials) -> DriveService:
-        resource = build("drive", "v3", credentials=credentials)
+        resource = build(
+            "drive", "v3", credentials=credentials, model=OrjsonModel()
+        )
         return DriveService(resource)
 
     # ----------------------------------------------------------------------------------

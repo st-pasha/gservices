@@ -1,5 +1,9 @@
 from typing import TYPE_CHECKING
 
+from googleapiclient.discovery import build  # type: ignore
+
+from gservices.json_model import OrjsonModel
+
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.resources as gr  # type: ignore[reportMissingModuleSource]
     from google.auth.credentials import Credentials
@@ -10,9 +14,9 @@ if TYPE_CHECKING:
 class SheetsService:
     @staticmethod
     def build(credentials: Credentials, google: GoogleServices) -> SheetsService:
-        from googleapiclient.discovery import build  # type: ignore
-
-        resource = build("sheets", "v4", credentials=credentials)
+        resource = build(
+            "sheets", "v4", credentials=credentials, model=OrjsonModel()
+        )
         return SheetsService(resource, google)
 
     def open(

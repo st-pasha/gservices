@@ -633,15 +633,20 @@ def _serial_to_iso(serial: float, nf_type: str) -> str:
 def _fmt_key(fmt_snap: CellFormatSnapshot) -> tuple[Any, ...]:
     """Hashable fingerprint of a CellFormatSnapshot for cell-grouping.
 
-    `json.dumps(..., sort_keys=True)` produces a valid key but is ~30× slower
-    than building a tuple of sorted items; with hundreds of thousands of
-    formatted cells in a snapshot, the difference is seconds. The only
-    list-valued field in the snapshot is `padding` — convert it to a tuple
-    so the whole structure is hashable.
+    `_extract_cell_format` already returns dicts with keys in a fixed order
+    (via `_order_keys`), so we don't need to re-sort here — just snapshot
+    the items.
+
+    The common case has no list-valued fields; `tuple(fmt_snap.items())`
+    is then directly hashable and the cheapest option. The only list-valued
+    field in the snapshot is `padding`; when present we convert it to a
+    tuple so the result is still hashable.
     """
+    if "padding" not in fmt_snap:
+        return tuple(fmt_snap.items())
     return tuple(
         (k, tuple(cast(list[Any], v)) if isinstance(v, list) else v)
-        for k, v in sorted(fmt_snap.items())
+        for k, v in fmt_snap.items()
     )
 
 

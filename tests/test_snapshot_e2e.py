@@ -283,9 +283,30 @@ class TestBatchLoad:
         # The fix-under-test: one call total to `.get()`, not five.
         get = service.resource.spreadsheets.return_value.get
         assert get.call_count == 1
-        # And it requested includeGridData=True.
+        # And it requested includeGridData=True with a narrow fields mask.
         _, kwargs = get.call_args
         assert kwargs.get("includeGridData") is True
+        fields = kwargs.get("fields", "")
+        assert "userEnteredValue" in fields
+        assert "effectiveFormat" in fields
+        # effectiveValue only included when include_computed=True (default off).
+        assert "effectiveValue" not in fields
+        # Things the snapshot doesn't read should be absent from the mask.
+        assert "formattedValue" not in fields
+        assert "userEnteredFormat" not in fields
+        assert "textFormatRuns" not in fields
+
+    def test_fields_mask_includes_effective_value_when_computed_requested(self):
+        from gservices.sheets.spreadsheet import Spreadsheet
+        data = self._spreadsheet_metadata_only(sheet_count=1)
+        service = self._service_returning_full_data(sheet_count=1)
+        spreadsheet = Spreadsheet(cast("gs.Spreadsheet", data), service)
+
+        spreadsheet.snapshot(include_computed=True)
+
+        get = service.resource.spreadsheets.return_value.get
+        _, kwargs = get.call_args
+        assert "effectiveValue" in kwargs.get("fields", "")
 
     def test_skip_api_call_if_all_sheets_preloaded(
         self, minimal_spreadsheet: Spreadsheet

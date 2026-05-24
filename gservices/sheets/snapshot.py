@@ -217,7 +217,7 @@ def build_snapshot(
     single batched API call — important for spreadsheets with many sheets,
     where serial per-sheet loads would otherwise dominate the wall time.
     """
-    spreadsheet._load_all_data()  # type: ignore[reportPrivateUsage]
+    spreadsheet._load_all_data(include_computed=include_computed)  # type: ignore[reportPrivateUsage]
     sheet_snaps = [
         _build_sheet(sheet, spreadsheet, include_computed)
         for sheet in spreadsheet.sheets

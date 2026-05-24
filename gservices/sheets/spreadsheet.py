@@ -40,21 +40,41 @@ class Spreadsheet:
         self._pending_updates: list[gs.Request] = []
         self._pending_callbacks: list[Callable[[gs.Response], None] | None] = []
 
-    def _load_all_data(self) -> None:
+    def _load_all_data(self, include_computed: bool = False) -> None:
         """Loads cell data for every sheet that doesn't yet have it, in a
         single API call. Much faster than letting each sheet hit the API
-        independently when the spreadsheet has many sheets."""
+        independently when the spreadsheet has many sheets.
+
+        A `fields=` mask restricts the response to the subset of CellData /
+        sheet data that the snapshot builder reads — skipping `formattedValue`,
+        `userEnteredFormat`, `textFormatRuns`, validation, pivot tables, etc.
+        For typical formatted documents this halves the response size.
+        """
         missing = [sheet for sheet in self._sheets if sheet._cell_data is None]
         if not missing:
             return
+        cell_fields = ["userEnteredValue", "effectiveFormat", "note", "hyperlink"]
+        if include_computed:
+            cell_fields.insert(1, "effectiveValue")
+        fields = (
+            "sheets("
+            "properties.sheetId,"
+            "data("
+            "rowMetadata,columnMetadata,"
+            f"rowData.values({','.join(cell_fields)})"
+            ")"
+            ")"
+        )
         data = (
             self._service.resource.spreadsheets()
-            .get(spreadsheetId=self._id, includeGridData=True)
+            .get(spreadsheetId=self._id, includeGridData=True, fields=fields)
             .execute()
         )
         by_id = {sheet.id: sheet for sheet in self._sheets}
         for sheet_data in data.get("sheets", []):
             sheet_id = sheet_data.get("properties", {}).get("sheetId")
+            if sheet_id is None:
+                continue
             sheet = by_id.get(sheet_id)
             if sheet is not None and sheet._cell_data is None:
                 blocks = sheet_data.get("data", [])

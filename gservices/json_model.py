@@ -11,7 +11,7 @@ Use by passing `model=OrjsonModel()` to `googleapiclient.discovery.build(...)`.
 """
 
 import orjson
-from googleapiclient.model import JsonModel  # type: ignore[reportMissingTypeStubs]
+from googleapiclient.model import JsonModel
 
 
 class OrjsonModel(JsonModel):

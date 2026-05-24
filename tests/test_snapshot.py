@@ -23,6 +23,7 @@ from gservices.sheets.snapshot import (
     _collect_borders,
     _compact_cells_to_ranges,
     _compact_to_range_list,
+    _DefaultFormat,
     _emit,
     _encode_cell_value,
     _extract_cell_format,
@@ -294,23 +295,23 @@ class TestNumberFormatString:
 class TestExtractCellFormat:
     def test_empty(self):
         empty: gs.CellFormat = {}
-        assert _extract_cell_format(empty, empty) == {}
+        assert _extract_cell_format(empty, _DefaultFormat(empty)) == {}
 
     def test_only_bold_differs(self):
         fmt: gs.CellFormat = {"textFormat": {"bold": True, "fontSize": 10}}
         default: gs.CellFormat = {"textFormat": {"fontSize": 10}}
-        assert _extract_cell_format(fmt, default) == {"bold": True}
+        assert _extract_cell_format(fmt, _DefaultFormat(default)) == {"bold": True}
 
     def test_subtracts_default(self):
         # Cell has bold=True; default also has bold=True — should not appear.
         fmt: gs.CellFormat = {"textFormat": {"bold": True}}
         default: gs.CellFormat = {"textFormat": {"bold": True}}
-        assert _extract_cell_format(fmt, default) == {}
+        assert _extract_cell_format(fmt, _DefaultFormat(default)) == {}
 
     def test_background_color(self):
         fmt: gs.CellFormat = {"backgroundColorStyle": {"rgbColor": {"red": 1.0}}}
         default: gs.CellFormat = {}
-        result = _extract_cell_format(fmt, default)
+        result = _extract_cell_format(fmt, _DefaultFormat(default))
         bg = result.get("bg")
         assert bg is not None
         assert bg.startswith("#ff")
@@ -318,12 +319,12 @@ class TestExtractCellFormat:
     def test_horizontal_alignment(self):
         fmt: gs.CellFormat = {"horizontalAlignment": "CENTER"}
         default: gs.CellFormat = {}
-        assert _extract_cell_format(fmt, default) == {"halign": "CENTER"}
+        assert _extract_cell_format(fmt, _DefaultFormat(default)) == {"halign": "CENTER"}
 
     def test_unspecified_alignment_omitted(self):
         fmt: gs.CellFormat = {"horizontalAlignment": "HORIZONTAL_ALIGN_UNSPECIFIED"}
         default: gs.CellFormat = {}
-        assert _extract_cell_format(fmt, default) == {}
+        assert _extract_cell_format(fmt, _DefaultFormat(default)) == {}
 
     def test_key_ordering(self):
         # Output keys should follow _CELL_FORMAT_KEY_ORDER, not insertion order.
@@ -333,7 +334,7 @@ class TestExtractCellFormat:
             "backgroundColorStyle": {"rgbColor": {"red": 1.0}},
         }
         default: gs.CellFormat = {}
-        keys = list(_extract_cell_format(fmt, default).keys())
+        keys = list(_extract_cell_format(fmt, _DefaultFormat(default)).keys())
         # bg comes before halign comes before bold/italic
         assert keys.index("bg") < keys.index("halign")
         assert keys.index("halign") < keys.index("bold")
@@ -344,7 +345,7 @@ class TestExtractCellFormat:
             "padding": {"top": 1, "right": 2, "bottom": 3, "left": 4}
         }
         default: gs.CellFormat = {}
-        result = _extract_cell_format(fmt, default)
+        result = _extract_cell_format(fmt, _DefaultFormat(default))
         assert result.get("padding") == [1, 2, 3, 4]
 
 

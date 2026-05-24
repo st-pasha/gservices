@@ -256,7 +256,9 @@ def _build_spreadsheet_meta(
         "gs.CellFormat",
         spreadsheet._properties.get("defaultFormat", {}),  # type: ignore[reportPrivateUsage]
     )
-    fmt = _extract_cell_format(default_format_data, {})
+    # An empty `_DefaultFormat` makes every attribute of the spreadsheet's
+    # own default visible in the snapshot (nothing to subtract against).
+    fmt = _extract_cell_format(default_format_data, _DefaultFormat({}))
     if fmt:
         result["default_cell_format"] = fmt
     metadata = _build_metadata_items(_spreadsheet_metadata_raw(spreadsheet))
@@ -336,11 +338,14 @@ def _build_sheet(
     if sheet.hide_gridlines:
         result["hide_gridlines"] = True
 
-    # Walk cell grid and collect all layers.
-    default_format = cast(
+    # Walk cell grid and collect all layers. The default format is the same
+    # for every cell, so precompute its derived values once instead of
+    # re-deriving them on every `_extract_cell_format` call.
+    default_format_raw = cast(
         "gs.CellFormat",
         spreadsheet._properties.get("defaultFormat", {}),  # type: ignore[reportPrivateUsage]
     )
+    default_format = _DefaultFormat(default_format_raw)
     cell_data: gs.GridData | None = sheet._cell_data  # type: ignore[reportPrivateUsage]
     rows_data: list[Any] = (
         cell_data.get("rowData", []) if cell_data is not None else []
@@ -650,33 +655,87 @@ def _fmt_key(fmt_snap: CellFormatSnapshot) -> tuple[Any, ...]:
     )
 
 
+class _DefaultFormat:
+    """Pre-computed derived values from the spreadsheet's defaultFormat.
+
+    `_extract_cell_format` is called once per cell — over 400k times on a
+    moderately-sized snapshot. With a raw `gs.CellFormat` as the default
+    argument, it would re-run `_number_format_string`, `color_object_to_string`
+    and ~10 nested `.get(...)` lookups on the same default values for every
+    cell. Hoisting all of that to a one-time precomputation eliminates the
+    redundancy; the per-cell call only deals with the cell's own format and
+    compares against simple attribute lookups.
+    """
+
+    __slots__ = (
+        "bg",
+        "bold",
+        "fg",
+        "font_family",
+        "font_size",
+        "halign",
+        "italic",
+        "number_format",
+        "padding",
+        "strikethrough",
+        "underline",
+        "valign",
+        "wrap",
+    )
+
+    bg: str | None
+    bold: bool
+    fg: str | None
+    font_family: str | None
+    font_size: float
+    halign: str | None
+    italic: bool
+    number_format: str | None
+    padding: gs.Padding | None
+    strikethrough: bool
+    underline: bool
+    valign: str | None
+    wrap: str | None
+
+    def __init__(self, default: gs.CellFormat):
+        self.number_format = _number_format_string(default.get("numberFormat"))
+        self.bg = color_object_to_string(default.get("backgroundColorStyle"))
+        self.halign = default.get("horizontalAlignment")
+        self.valign = default.get("verticalAlignment")
+        self.wrap = default.get("wrapStrategy")
+        self.padding = default.get("padding")
+        tf = default.get("textFormat", {})
+        self.fg = color_object_to_string(tf.get("foregroundColorStyle"))
+        self.font_family = tf.get("fontFamily")
+        self.font_size = tf.get("fontSize", 10)
+        self.bold = tf.get("bold", False)
+        self.italic = tf.get("italic", False)
+        self.underline = tf.get("underline", False)
+        self.strikethrough = tf.get("strikethrough", False)
+
+
 def _extract_cell_format(
     fmt: gs.CellFormat,
-    default: gs.CellFormat,
+    default: _DefaultFormat,
 ) -> CellFormatSnapshot:
     result: dict[str, Any] = {}
 
     nf = _number_format_string(fmt.get("numberFormat"))
-    default_nf = _number_format_string(default.get("numberFormat"))
-    if nf is not None and nf != default_nf:
+    if nf is not None and nf != default.number_format:
         result["number_format"] = nf
 
     bg = color_object_to_string(fmt.get("backgroundColorStyle"))
-    default_bg = color_object_to_string(default.get("backgroundColorStyle"))
-    if bg and bg != default_bg:
+    if bg and bg != default.bg:
         result["bg"] = bg
 
     tf = fmt.get("textFormat", {})
-    default_tf = default.get("textFormat", {})
 
     fg = color_object_to_string(tf.get("foregroundColorStyle"))
-    default_fg = color_object_to_string(default_tf.get("foregroundColorStyle"))
-    if fg and fg != default_fg:
+    if fg and fg != default.fg:
         result["fg"] = fg
 
     p = fmt.get("padding")
-    default_p = default.get("padding")
-    if p and p != default_p:
+    if p and p != default.padding:
         result["padding"] = [
             p.get("top", 0),
             p.get("right", 0),
@@ -685,47 +744,45 @@ def _extract_cell_format(
         ]
 
     halign = fmt.get("horizontalAlignment")
-    default_halign = default.get("horizontalAlignment")
     if (
         halign
         and halign != "HORIZONTAL_ALIGN_UNSPECIFIED"
-        and halign != default_halign
+        and halign != default.halign
     ):
         result["halign"] = halign
 
     valign = fmt.get("verticalAlignment")
-    default_valign = default.get("verticalAlignment")
     if (
         valign
         and valign != "VERTICAL_ALIGN_UNSPECIFIED"
-        and valign != default_valign
+        and valign != default.valign
     ):
         result["valign"] = valign
 
     wrap = fmt.get("wrapStrategy")
-    default_wrap = default.get("wrapStrategy")
     if (
         wrap
         and wrap != "WRAP_STRATEGY_UNSPECIFIED"
-        and wrap != default_wrap
+        and wrap != default.wrap
     ):
         result["wrap"] = wrap
 
     ff = tf.get("fontFamily")
-    default_ff = default_tf.get("fontFamily")
-    if ff and ff != default_ff:
+    if ff and ff != default.font_family:
         result["font_family"] = ff
 
     fs = tf.get("fontSize")
-    default_fs = default_tf.get("fontSize", 10)
-    if fs is not None and fs != default_fs:
+    if fs is not None and fs != default.font_size:
         result["font_size"] = fs
 
-    for key in ("bold", "italic", "underline", "strikethrough"):
-        val = tf.get(key, False)
-        default_val = default_tf.get(key, False)
-        if val and val != default_val:
-            result[key] = True
+    if tf.get("bold", False) and not default.bold:
+        result["bold"] = True
+    if tf.get("italic", False) and not default.italic:
+        result["italic"] = True
+    if tf.get("underline", False) and not default.underline:
+        result["underline"] = True
+    if tf.get("strikethrough", False) and not default.strikethrough:
+        result["strikethrough"] = True
 
     return cast(
         CellFormatSnapshot, _order_keys(result, _CELL_FORMAT_KEY_ORDER)

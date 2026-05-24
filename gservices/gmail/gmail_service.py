@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING
 
 from googleapiclient.discovery import build  # type: ignore
 
+from gservices.json_model import OrjsonModel
+
 if TYPE_CHECKING:
     import googleapiclient._apis.gmail.v1.resources as g  # type: ignore
     from google.auth.credentials import Credentials
@@ -18,8 +20,6 @@ class GmailService:
 
     @staticmethod
     def build(credentials: Credentials) -> GmailService:
-        from gservices.json_model import OrjsonModel
-
         resource = build(
             "gmail", "v1", credentials=credentials, model=OrjsonModel()
         )

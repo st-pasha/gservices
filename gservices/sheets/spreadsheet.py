@@ -1,11 +1,21 @@
-from collections.abc import Callable, Sequence
+import datetime as dt
+import json
+import uuid
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
 
     from gservices.sheets.snapshot import SpreadsheetSnapshot
+
+
+# Description prefix for protectedRanges this library creates as edit-locks.
+# Distinguishes our locks from user-created protections so stale-lock cleanup
+# only touches what we own.
+_LOCK_MARKER = "gservices-lock:"
 
 
 class SpreadsheetVersionMismatchError(RuntimeError):
@@ -175,6 +185,192 @@ class Spreadsheet:
             .execute()
         )
         return int(data.get("version", 0))
+
+    @contextmanager  # pyright: ignore[reportDeprecated]
+    def exclusive_edit(
+        self,
+        *,
+        sheets: Sequence["Sheet | str"] | None = None,
+        ttl_seconds: int = 300,
+    ) -> Iterator[None]:
+        """
+        Acquire exclusive edit access on the spreadsheet for the duration of
+        the `with` block, via Sheets' `addProtectedRange` mechanism.
+
+        Adds a `protectedRange` covering each target sheet with the
+        authenticated user as the sole editor. Other users see the affected
+        sheets as read-only (a lock icon + "you don't have permission to
+        edit" warning) until the block exits.
+
+        Normal exit: any pending updates are flushed via `save()`, then the
+        protection is released. Exception exit: the protection is released
+        but pending updates are NOT flushed — the caller decides what to
+        do with them (e.g. discard, retry).
+
+        Stale-lock recovery: each acquire encodes `{holder, lock_id,
+        expires_at}` JSON in the protection's `description` field. Before
+        installing its own lock, the next `exclusive_edit()` scans existing
+        protections and forcibly removes any of our locks whose
+        `expires_at` is in the past — so a crashed run self-heals after
+        `ttl_seconds`.
+
+        Limitations:
+          - Best-effort, not transactional. The Sheets API has no
+            compare-and-swap, so two simultaneous `exclusive_edit()` calls
+            can both install protections (each thinks it holds the lock).
+            Server-side edit blocking still applies to non-listed users
+            for both protections.
+          - Other users see the protection in their UI ("locked by X"),
+            which is intrusive for collaborative spreadsheets.
+          - Requires the authenticated user to be the file owner or have
+            edit access; an owner can still remove the protection manually.
+          - Setting `sheets=None` (default) protects all sheets, including
+            ones you don't intend to edit. Pass a subset to scope down.
+
+        Args:
+          sheets: list of Sheet or sheet-name strings to lock. None
+            (default) locks every sheet in the spreadsheet.
+          ttl_seconds: how long after acquisition the lock is considered
+            "stale" by a future caller's recovery sweep. The lock is NOT
+            automatically released at this time — only marked as available
+            for forced removal. Default 300s (5 min). Set generously.
+        """
+        target_sheets = self._resolve_lock_targets(sheets)
+        my_email = self._fetch_self_email()
+
+        existing = self._fetch_protected_ranges()
+        stale_ids = self._find_stale_lock_ids(existing)
+
+        lock_id = str(uuid.uuid4())
+        expires_at = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=ttl_seconds)
+        description = _LOCK_MARKER + json.dumps({
+            "holder": my_email,
+            "lock_id": lock_id,
+            "expires_at": expires_at.isoformat(),
+        })
+        acquire_requests: list[gs.Request] = [
+            {"deleteProtectedRange": {"protectedRangeId": pid}}
+            for pid in stale_ids
+        ]
+        for sheet in target_sheets:
+            acquire_requests.append({
+                "addProtectedRange": {
+                    "protectedRange": {
+                        "range": {"sheetId": sheet.id},
+                        "description": description,
+                        "editors": {"users": [my_email]},
+                    },
+                },
+            })
+
+        response = (
+            self._service.resource.spreadsheets()
+            .batchUpdate(
+                spreadsheetId=self._id,
+                body={
+                    "requests": acquire_requests,
+                    "includeSpreadsheetInResponse": False,
+                },
+            )
+            .execute()
+        )
+
+        # Pluck the new protectedRangeIds from the addProtectedRange replies
+        # (deleteProtectedRange replies are empty objects we don't need).
+        our_protection_ids: list[int] = []
+        for reply in response.get("replies", []):
+            add = reply.get("addProtectedRange")
+            if add is None:
+                continue
+            pid = add.get("protectedRange", {}).get("protectedRangeId")
+            if pid is not None:
+                our_protection_ids.append(pid)
+
+        try:
+            yield
+            # Normal exit: flush user-queued writes before releasing.
+            self.save()
+        finally:
+            # Always release our protections — even on exception. Send a
+            # direct batchUpdate (don't go through self._pending_updates,
+            # which may still hold unflushed user requests).
+            if our_protection_ids:
+                release_requests: list[gs.Request] = [
+                    {"deleteProtectedRange": {"protectedRangeId": pid}}
+                    for pid in our_protection_ids
+                ]
+                self._service.resource.spreadsheets().batchUpdate(
+                    spreadsheetId=self._id,
+                    body={
+                        "requests": release_requests,
+                        "includeSpreadsheetInResponse": False,
+                    },
+                ).execute()
+
+    def _resolve_lock_targets(
+        self, sheets: "Sequence[Sheet | str] | None"
+    ) -> list[Sheet]:
+        if sheets is None:
+            return list(self._sheets)
+        out: list[Sheet] = []
+        for s in sheets:
+            if isinstance(s, str):
+                obj = self.sheet(s)
+                if obj is None:
+                    raise KeyError(f"Sheet {s!r} not found in spreadsheet")
+                out.append(obj)
+            else:
+                out.append(s)
+        return out
+
+    def _fetch_self_email(self) -> str:
+        """Returns the authenticated principal's email (OAuth user or
+        service account address). Cached on the SheetsService."""
+        drive_resource = self._service._google.Drive.resource
+        data = cast(dict[str, Any], drive_resource.about().get(fields="user").execute())
+        return data["user"]["emailAddress"]
+
+    def _fetch_protected_ranges(self) -> list[tuple[int, dict[str, Any]]]:
+        """Returns (sheet_id, protectedRange) tuples for every existing
+        protectedRange in this spreadsheet — used to find stale locks
+        and to leave non-lock protections alone."""
+        data = (
+            self._service.resource.spreadsheets()
+            .get(
+                spreadsheetId=self._id,
+                fields="sheets.properties.sheetId,sheets.protectedRanges",
+            )
+            .execute()
+        )
+        out: list[tuple[int, dict[str, Any]]] = []
+        for sheet in cast(list[dict[str, Any]], data.get("sheets", [])):
+            sheet_id = sheet.get("properties", {}).get("sheetId", -1)
+            for pr in sheet.get("protectedRanges", []):
+                out.append((sheet_id, pr))
+        return out
+
+    def _find_stale_lock_ids(
+        self, existing: list[tuple[int, dict[str, Any]]]
+    ) -> list[int]:
+        """Filter to protectedRangeIds whose description carries our lock
+        marker and an expires_at in the past. Malformed metadata is left
+        alone (could be a future lock format we don't recognize)."""
+        now = dt.datetime.now(dt.UTC)
+        stale: list[int] = []
+        for _, pr in existing:
+            description = pr.get("description", "")
+            if not description.startswith(_LOCK_MARKER):
+                continue
+            try:
+                metadata = json.loads(description[len(_LOCK_MARKER):])
+                expires_at = dt.datetime.fromisoformat(metadata["expires_at"])
+                if expires_at < now:
+                    pid = pr.get("protectedRangeId")
+                    if pid is not None:
+                        stale.append(pid)
+            except (ValueError, KeyError, TypeError):
+                continue
+        return stale
 
     # ----------------------------------------------------------------------------------
     # Basic properties

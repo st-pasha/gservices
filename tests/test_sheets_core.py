@@ -4,6 +4,8 @@ Unit tests for core `gservices.sheets` behaviors — `Sheet`, `Row`, `Column`,
 don't depend on the snapshot pipeline.
 """
 
+import datetime as dt
+import json
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
@@ -905,3 +907,261 @@ class TestSaveCheckVersion:
         ss.save(check_version=True)
         batch_call = service.resource.spreadsheets.return_value.batchUpdate
         assert batch_call.call_count == 0
+
+
+# ----------------------------------------------------------------------------
+# Spreadsheet.exclusive_edit — protected-range locking
+# ----------------------------------------------------------------------------
+
+class TestExclusiveEdit:
+    """`exclusive_edit()` brackets a block with addProtectedRange /
+    deleteProtectedRange. Encodes TTL metadata in the protection
+    description so a crashed run can be cleaned up by the next caller."""
+
+    def _ss_with_protection_mock(
+        self,
+        *,
+        existing_protections: list[dict[str, Any]] | None = None,
+        sheet_ids: list[int] | None = None,
+        new_protection_ids: list[int] | None = None,
+        my_email: str = "me@example.com",
+    ) -> tuple[Spreadsheet, MagicMock]:
+        """Build a Spreadsheet whose service mocks:
+          - drive.about().get → returns my_email
+          - spreadsheets.get → returns existing protections
+          - spreadsheets.batchUpdate → returns replies with new_protection_ids
+            for addProtectedRange entries (cycled).
+        """
+        sheet_ids = sheet_ids if sheet_ids is not None else [0]
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [
+                {
+                    "properties": {"sheetId": sid, "title": f"S{sid}", "index": i},
+                    "data": [],
+                }
+                for i, sid in enumerate(sheet_ids)
+            ],
+        }
+        service = MagicMock()
+
+        # Drive about() → user email
+        drive_about_execute = (
+            service._google.Drive.resource.about.return_value.get
+            .return_value.execute
+        )
+        drive_about_execute.return_value = {"user": {"emailAddress": my_email}}
+
+        # spreadsheets.get → existing protections, scoped per sheet
+        protections_by_sheet: dict[int, list[dict[str, Any]]] = {sid: [] for sid in sheet_ids}
+        for pr in (existing_protections or []):
+            sid = pr.get("_sheet_id", sheet_ids[0])
+            pr_copy = {k: v for k, v in pr.items() if k != "_sheet_id"}
+            protections_by_sheet.setdefault(sid, []).append(pr_copy)
+        get_response = {
+            "sheets": [
+                {
+                    "properties": {"sheetId": sid},
+                    "protectedRanges": protections_by_sheet[sid],
+                }
+                for sid in sheet_ids
+            ],
+        }
+        sheets_get_execute = (
+            service.resource.spreadsheets.return_value.get
+            .return_value.execute
+        )
+        sheets_get_execute.return_value = get_response
+
+        # spreadsheets.batchUpdate → return new protectedRangeIds for each
+        # addProtectedRange request in the batch.
+        new_ids_iter = iter(new_protection_ids or [100, 101, 102, 103])
+
+        def make_reply_for(body: dict[str, Any]) -> dict[str, Any]:
+            replies: list[dict[str, Any]] = []
+            for req in body.get("requests", []):
+                if "addProtectedRange" in req:
+                    replies.append({
+                        "addProtectedRange": {
+                            "protectedRange": {"protectedRangeId": next(new_ids_iter)}
+                        }
+                    })
+                else:
+                    replies.append({})
+            return {"replies": replies}
+
+        # batchUpdate execute needs to inspect the body each call.
+        batch_call = service.resource.spreadsheets.return_value.batchUpdate
+
+        def batch_update(*, spreadsheetId: str, body: dict[str, Any]) -> MagicMock:
+            execute = MagicMock()
+            execute.execute.return_value = make_reply_for(body)
+            return execute
+
+        batch_call.side_effect = batch_update
+
+        ss = Spreadsheet(cast("gs.Spreadsheet", data), service)
+        return ss, service
+
+    def _batch_calls(self, service: MagicMock) -> list[dict[str, Any]]:
+        """Return the request bodies of every batchUpdate call, in order."""
+        batch = service.resource.spreadsheets.return_value.batchUpdate
+        return [c.kwargs["body"] for c in batch.call_args_list]
+
+    def test_basic_acquire_and_release(self):
+        ss, service = self._ss_with_protection_mock(
+            sheet_ids=[0], new_protection_ids=[100],
+        )
+        with ss.exclusive_edit():
+            pass
+
+        bodies = self._batch_calls(service)
+        # Two batchUpdates: acquire and release.
+        assert len(bodies) == 2
+
+        # First batch: one addProtectedRange request.
+        acquire_requests = bodies[0]["requests"]
+        assert len(acquire_requests) == 1
+        protected = acquire_requests[0]["addProtectedRange"]["protectedRange"]
+        assert protected["range"] == {"sheetId": 0}
+        assert protected["editors"] == {"users": ["me@example.com"]}
+        assert protected["description"].startswith("gservices-lock:")
+        # Metadata is parseable JSON with expected keys.
+        meta = json.loads(protected["description"][len("gservices-lock:"):])
+        assert meta["holder"] == "me@example.com"
+        assert "lock_id" in meta
+        assert "expires_at" in meta
+
+        # Second batch: deleteProtectedRange for our id 100.
+        release_requests = bodies[1]["requests"]
+        assert release_requests == [
+            {"deleteProtectedRange": {"protectedRangeId": 100}}
+        ]
+
+    def test_release_on_exception(self):
+        ss, service = self._ss_with_protection_mock(
+            sheet_ids=[0], new_protection_ids=[100],
+        )
+
+        class _UserError(Exception):
+            pass
+
+        with pytest.raises(_UserError):
+            with ss.exclusive_edit():
+                raise _UserError()
+
+        bodies = self._batch_calls(service)
+        # Acquire + release, even though user code raised.
+        assert len(bodies) == 2
+        # Release batch present.
+        assert bodies[1]["requests"] == [
+            {"deleteProtectedRange": {"protectedRangeId": 100}}
+        ]
+
+    def test_stale_lock_cleanup(self):
+        # A previous lock has expires_at well in the past — current caller
+        # should add a deleteProtectedRange for it in the acquire batch.
+        past = (
+            dt.datetime.now(dt.UTC) - dt.timedelta(seconds=600)
+        ).isoformat()
+        stale_description = "gservices-lock:" + json.dumps({
+            "holder": "ghost@example.com",
+            "lock_id": "ghost-uuid",
+            "expires_at": past,
+        })
+        ss, service = self._ss_with_protection_mock(
+            sheet_ids=[0],
+            existing_protections=[
+                {
+                    "_sheet_id": 0,
+                    "protectedRangeId": 99,
+                    "description": stale_description,
+                },
+            ],
+            new_protection_ids=[100],
+        )
+        with ss.exclusive_edit():
+            pass
+
+        acquire_requests = self._batch_calls(service)[0]["requests"]
+        # Delete-99 comes before our add (single batch, atomic on server).
+        assert acquire_requests[0] == {
+            "deleteProtectedRange": {"protectedRangeId": 99}
+        }
+        assert "addProtectedRange" in acquire_requests[1]
+
+    def test_fresh_lock_not_cleaned_up(self):
+        # A non-stale lock from another holder must be left alone — even
+        # though we may end up coexisting (two locks active). This is the
+        # documented best-effort behavior.
+        future = (
+            dt.datetime.now(dt.UTC) + dt.timedelta(seconds=600)
+        ).isoformat()
+        fresh_description = "gservices-lock:" + json.dumps({
+            "holder": "other@example.com",
+            "lock_id": "other-uuid",
+            "expires_at": future,
+        })
+        ss, service = self._ss_with_protection_mock(
+            sheet_ids=[0],
+            existing_protections=[
+                {
+                    "_sheet_id": 0,
+                    "protectedRangeId": 99,
+                    "description": fresh_description,
+                },
+            ],
+            new_protection_ids=[100],
+        )
+        with ss.exclusive_edit():
+            pass
+
+        acquire_requests = self._batch_calls(service)[0]["requests"]
+        # No delete of 99 in the acquire batch — just our add.
+        assert all(
+            r.get("deleteProtectedRange", {}).get("protectedRangeId") != 99
+            for r in acquire_requests
+        )
+
+    def test_non_lock_protection_not_touched(self):
+        # A user-created protection (no gservices-lock: prefix) must be
+        # ignored entirely — stale-lock cleanup is scoped to our marker.
+        ss, service = self._ss_with_protection_mock(
+            sheet_ids=[0],
+            existing_protections=[
+                {
+                    "_sheet_id": 0,
+                    "protectedRangeId": 77,
+                    "description": "User's protected header row",
+                },
+            ],
+            new_protection_ids=[100],
+        )
+        with ss.exclusive_edit():
+            pass
+
+        acquire_requests = self._batch_calls(service)[0]["requests"]
+        # No delete of 77; just our add.
+        for r in acquire_requests:
+            assert r.get("deleteProtectedRange", {}).get("protectedRangeId") != 77
+
+    def test_sheets_parameter_scopes_protection(self):
+        # Pass an explicit list — only those sheets get protected.
+        ss, service = self._ss_with_protection_mock(
+            sheet_ids=[0, 1, 2],
+            new_protection_ids=[100, 101],
+        )
+        # Lock only the first two sheets.
+        target_sheets = list(ss.sheets[0:2])
+        with ss.exclusive_edit(sheets=target_sheets):
+            pass
+
+        acquire_requests = self._batch_calls(service)[0]["requests"]
+        adds = [r for r in acquire_requests if "addProtectedRange" in r]
+        assert len(adds) == 2
+        protected_sheet_ids = sorted(
+            r["addProtectedRange"]["protectedRange"]["range"]["sheetId"]
+            for r in adds
+        )
+        assert protected_sheet_ids == [0, 1]

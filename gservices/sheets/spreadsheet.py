@@ -253,20 +253,55 @@ class Spreadsheet:
                 return sheet
         return None
 
-    def add_sheet(self, name: str) -> Sheet:
+    def add_sheet(
+        self,
+        name: str,
+        *,
+        row_count: int | None = None,
+        column_count: int | None = None,
+        tab_color: str | None = None,
+        hide_gridlines: bool = False,
+    ) -> Sheet:
         """
         Creates a new sheet with the given [name] and adds it at the end of the
         sheet list.
+
+        Optional grid sizing: pass [row_count] and/or [column_count] to override
+        the API's defaults. Pass [tab_color] (hex string or theme name) to set
+        the tab color, and [hide_gridlines]=True to hide gridlines in the new
+        sheet.
         """
-        max_id = max(sheet.id for sheet in self._sheets)
+        max_id = max((sheet.id for sheet in self._sheets), default=-1)
         properties: gs.SheetProperties = {
             "sheetId": max_id + 1,
             "sheetType": "GRID",
             "title": name,
             "index": len(self._sheets),
         }
-        self._add_request({"addSheet": {"properties": properties}})
+        grid_properties: gs.GridProperties = {}
+        if row_count is not None:
+            grid_properties["rowCount"] = row_count
+        if column_count is not None:
+            grid_properties["columnCount"] = column_count
+        if hide_gridlines:
+            grid_properties["hideGridlines"] = True
+        if grid_properties:
+            properties["gridProperties"] = grid_properties
+        if tab_color is not None:
+            properties["tabColorStyle"] = color_string_to_object(tab_color)
+
         sheet = Sheet({"properties": properties}, self)
+
+        def _on_add_response(response: gs.Response) -> None:
+            new_props = response.get("addSheet", {}).get("properties", {})
+            actual_id = new_props.get("sheetId")
+            if actual_id is not None:
+                sheet._properties["sheetId"] = actual_id
+
+        self._add_request(
+            {"addSheet": {"properties": properties}},
+            callback=_on_add_response,
+        )
         self._sheets.append(sheet)
         return sheet
 
@@ -275,12 +310,13 @@ class Spreadsheet:
         Deletes the given [sheet] from the spreadsheet.
         """
         if isinstance(sheet, str):
-            sheet_obj = self.sheet(sheet)
-            if not sheet_obj:
+            resolved = self.sheet(sheet)
+            if resolved is None:
                 raise KeyError(f"Sheet `{sheet}` does not exist in the spreadsheet")
-            sheet = sheet_obj
-        assert sheet._spreadsheet is self
-        sheet.delete()
+        else:
+            resolved = sheet
+        assert resolved._spreadsheet is self
+        resolved.delete()
 
     def snapshot(self, include_computed: bool = False) -> SpreadsheetSnapshot:
         """
@@ -388,6 +424,7 @@ from gservices.sheets.sheet import Sheet
 from gservices.sheets.sheets_service import SheetsService
 from gservices.sheets.utils import (
     color_object_to_string,
+    color_string_to_object,
     merge_requests,
     set_dotted_property,
 )

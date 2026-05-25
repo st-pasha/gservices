@@ -497,6 +497,40 @@ class Sheet:
             cell._column += 1
             self._cell_cache[(key[0], key[1] + 1)] = cell
 
+    def _handle_column_removed(self, removed_column_index: int) -> None:
+        if cell_data := self._cell_data:
+            if rows := cell_data.get("rowData"):
+                for row in rows:
+                    if values := row.get("values"):
+                        if removed_column_index < len(values):
+                            del values[removed_column_index]
+            if col_meta := cell_data.get("columnMetadata"):
+                if removed_column_index < len(col_meta):
+                    del col_meta[removed_column_index]
+        if self._cell_values:
+            for row in self._cell_values:
+                if removed_column_index < len(row):
+                    del row[removed_column_index]
+        remove_keys = [key for key in self._cell_cache if key[1] == removed_column_index]
+        for key in remove_keys:
+            del self._cell_cache[key]
+
+    def _handle_column_moved(self, old_index: int, new_index: int) -> None:
+        if cell_data := self._cell_data:
+            if rows := cell_data.get("rowData"):
+                for row in rows:
+                    if values := row.get("values"):
+                        if old_index < len(values):
+                            array_move(values, old_index, new_index)
+            if col_meta := cell_data.get("columnMetadata"):
+                if old_index < len(col_meta):
+                    array_move(col_meta, old_index, new_index)
+        if self._cell_values is not None:
+            for row in self._cell_values:
+                if old_index < len(row):
+                    array_move(row, old_index, new_index)
+        self._cell_cache.clear()
+
     def _check_integrity(self) -> None:
         nrows = None
         ncols = None

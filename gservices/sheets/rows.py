@@ -42,7 +42,11 @@ class Rows:
     def limit(self, value: int) -> None:
         self._sheet.max_row_count = value
 
-    def insert(self, before: int | None = None, after: int | None = None) -> Row:
+    def insert(
+        self,
+        before: int | Row | None = None,
+        after: int | Row | None = None,
+    ) -> Row:
         """
         Inserts a new row either [before] or [after] the specified index, and returns
         the new row just created. If both [before] and [after] are omitted then the
@@ -50,11 +54,17 @@ class Rows:
         """
         if before is not None:
             assert after is None
-            assert 0 <= before <= len(self)
-            new_index = before
+            if isinstance(before, Row):
+                new_index = before.index
+            else:
+                assert 0 <= before <= len(self)
+                new_index = before
         elif after is not None:
-            assert 0 <= after < len(self)
-            new_index = after + 1
+            if isinstance(after, Row):
+                new_index = after.index + 1
+            else:
+                assert 0 <= after < len(self)
+                new_index = after + 1
         else:
             new_index = len(self)
         self._sheet._spreadsheet._add_request({

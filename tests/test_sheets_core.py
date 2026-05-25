@@ -252,3 +252,97 @@ class TestMetadataDelete:
         ])
         del ss.metadata[0]
         assert len(ss.metadata) == 0
+
+
+# ----------------------------------------------------------------------------
+# _handle_row_inserted — cache freshness when rowData is missing
+# ----------------------------------------------------------------------------
+
+class TestRowInsertedCacheFreshness:
+    """`_handle_row_inserted` used `_cell_data.get("rowData", []).insert(...)`,
+    which mutates a throwaway list when the key is missing. The local cache
+    then disagreed with what the spreadsheet actually had after the insert."""
+
+    def test_insert_creates_rowdata_when_missing(self):
+        # Build a sheet with _cell_data set but no "rowData" key.
+        data = _sheet_data(row_data=[])
+        ss = _make_spreadsheet(data)
+        sheet = ss.sheets[0]
+        assert sheet._cell_data is not None
+        sheet._cell_data.pop("rowData", None)
+        sheet._cell_data.pop("rowMetadata", None)
+
+        sheet.rows.insert(before=0)
+
+        # The mutation must have landed on the real _cell_data, not a throwaway.
+        row_data = sheet._cell_data.get("rowData")
+        assert row_data == [{"values": []}]
+        row_meta = sheet._cell_data.get("rowMetadata")
+        assert row_meta == [{}]
+
+    def test_insert_preserves_existing_rowdata(self):
+        data = _sheet_data(
+            row_data=[_row("existing")],
+            row_meta=[{"pixelSize": 30}],
+        )
+        sheet = _make_spreadsheet(data).sheets[0]
+        sheet.rows.insert(before=0)
+        assert sheet._cell_data is not None
+        row_data = cast(list[dict[str, Any]], sheet._cell_data.get("rowData"))
+        assert row_data is not None
+        assert len(row_data) == 2
+        # The inserted row is empty; the existing row's content is preserved.
+        assert row_data[0] == {"values": []}
+        assert row_data[1]["values"][0]["userEnteredValue"] == {
+            "stringValue": "existing"
+        }
+
+
+# ----------------------------------------------------------------------------
+# Columns.__getitem__ — caching
+# ----------------------------------------------------------------------------
+
+class TestColumnsCaching:
+    """`Columns.__getitem__` used to return a fresh `Column` every call, so
+    `col.metadata.add(...)` mutated a throwaway `_metadata`. Now identical."""
+
+    def test_same_column_instance_returned(self):
+        data = _sheet_data(row_data=[_row("a", "b", "c")])
+        cols = _make_spreadsheet(data).sheets[0].columns
+        assert cols[1] is cols[1]
+        assert cols[0] is not cols[1]
+
+    def test_metadata_persists_across_access(self):
+        # Cached metadata mutation must survive a re-fetch through Columns.
+        data = _sheet_data(
+            row_data=[_row("a", "b")],
+            col_meta=[
+                {"developerMetadata": []},
+                {"developerMetadata": []},
+            ],
+        )
+        cols = _make_spreadsheet(data).sheets[0].columns
+        cols[0].metadata.add("k", "v")
+        # Same object after the add — and the entry is visible.
+        assert len(cols[0].metadata) == 1
+        assert cols[0].metadata[0].key == "k"
+
+    def test_column_insert_shifts_cached_columns(self):
+        data = _sheet_data(
+            row_data=[_row("a", "b", "c")],
+            col_meta=[{}, {}, {}],
+        )
+        cols = _make_spreadsheet(data).sheets[0].columns
+        col0 = cols[0]
+        col2 = cols[2]
+        assert col0.index == 0
+        assert col2.index == 2
+
+        cols.insert(before=1)
+
+        # col0 stays at index 0; col2 has shifted to index 3.
+        assert col0.index == 0
+        assert col2.index == 3
+        # Re-fetching the same Column at its new index returns the same object.
+        assert cols[3] is col2
+        assert cols[0] is col0

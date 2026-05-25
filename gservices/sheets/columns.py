@@ -11,7 +11,11 @@ class Columns:
         """
         if self._ncols is None:
             if self._sheet._cell_data is not None:
-                self._ncols = len(self._sheet._cell_data.get("rowData", [])[0])
+                row_data = self._sheet._cell_data.get("rowData", [])
+                if row_data:
+                    self._ncols = len(row_data[0].get("values", []))
+                else:
+                    self._ncols = 0
             else:
                 # This will cause the data to load if it wasn't loaded before
                 values = self._sheet.values

@@ -20,7 +20,10 @@ class Sheet:
         self._columns = Columns(self)
         self._cell_cache: dict[tuple[int, int], Cell] = {}
         self._cell_values: list[list[str]] | None = None
-        self._cell_data: gs.GridData | None = data.get("data", [None])[0]
+        # API returns "data": [] for sheets whose grid wasn't requested.
+        # Only when the first block is actually present do we have cell data.
+        blocks = data.get("data") or [None]
+        self._cell_data: gs.GridData | None = blocks[0]
 
         # Ignored:
         #   conditionalFormats

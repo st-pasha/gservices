@@ -48,11 +48,19 @@ class Cell:
         ):
             return
         v = python_to_value(new_value)
-        vv = str(new_value)
         self._set_property("userEnteredValue", v)
-        self._data["effectiveValue"] = v
-        self._data["formattedValue"] = vv
-        self._sheet._handle_cell_value_changed(self._row, self._column, vv)
+        if isinstance(new_value, Formula):
+            # For formulas the effective + formatted values are computed
+            # server-side; we can't synthesize them locally. Invalidate so
+            # the next read either fetches fresh or returns honest empties.
+            self._data.pop("effectiveValue", None)
+            self._data.pop("formattedValue", None)
+            self._sheet._handle_cell_value_changed(self._row, self._column, "")
+        else:
+            vv = "" if new_value is None else str(new_value)
+            self._data["effectiveValue"] = v
+            self._data["formattedValue"] = vv
+            self._sheet._handle_cell_value_changed(self._row, self._column, vv)
 
     @property
     def user_entered_value(self) -> CellValue:
@@ -151,6 +159,7 @@ from gservices.print_utils import pprint
 from gservices.sheets.cell_format import CellFormat
 from gservices.sheets.cell_value import (
     CellValue,
+    Formula,
     HyperlinkFormula,
     python_to_value,
     value_to_python,

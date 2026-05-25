@@ -55,7 +55,7 @@ class Row:
 
     @property
     def next_row(self) -> Row | None:
-        if self._index == len(self) - 1:
+        if self._index >= len(self._sheet.rows) - 1:
             return None
         return self._sheet.rows[self._index + 1]
 

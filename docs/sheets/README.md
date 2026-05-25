@@ -100,19 +100,69 @@ See [spreadsheet.md](spreadsheet.md) for `save()` semantics.
 - [**snapshot.md**](snapshot.md) — `Spreadsheet.snapshot()` / `save_snapshot()`,
   the git-diff-friendly format
 
-## What this library doesn't do
+## Feature coverage
 
-- **No bulk-write API.** Each `cell.value = ...` is one `updateCells` request.
-  Sequential identical-format writes to adjacent cells merge automatically (see
-  `merge_requests` in `utils.py`), but writing 1000 distinct cells is still
-  1000 requests. If you need bulk writes, consider batching with
-  `values.batchUpdate` directly via `SheetsService.resource`.
-- **No charts, pivot tables, data validation, conditional formatting, filter
-  views, banded ranges, slicers.** The data model wraps cells, formats, rows,
-  columns, merges, borders, and metadata. The other features pass through the
-  API but aren't exposed in the wrapper.
-- **No transactional updates.** Sheets has no compare-and-swap. The library
-  offers two opt-in safety nets — version checking and protected-range locking
-  — see [concurrency.md](concurrency.md).
-- **No time travel.** Drive revisions exist but Sheets-native API doesn't
-  support reading at a specific revision; only XLSX exports are revision-aware.
+### Supported
+
+- **Cell content** — strings, numbers, booleans, formulas, error values,
+  notes, hyperlinks, dates / times / datetimes (with proper number formats)
+- **Cell formatting** — number formats (TEXT / NUMBER / PERCENT / CURRENCY
+  / DATE / TIME / DATE_TIME / SCIENTIFIC with patterns), background and
+  foreground colors (hex or theme), padding, horizontal and vertical
+  alignment, wrap strategy, font family, font size, bold, italic,
+  underline, strikethrough
+- **Borders** — all four edges (top / right / bottom / left), every style
+  (DOTTED / DASHED / SOLID / SOLID_MEDIUM / SOLID_THICK / DOUBLE), width
+  and color
+- **Merged cells** — read and create
+- **Row and column structure** — heights and widths, hidden state,
+  insert / move / remove / sort
+- **Sheet structure** — add / delete / move / rename, hidden state, tab
+  color, hide gridlines, frozen rows / columns, max grid size
+- **Document properties** — title, locale, time zone, theme, default cell
+  format
+- **Developer metadata** — at spreadsheet, sheet, row, and column scope;
+  persists across structural changes (row inserts, sorts, moves)
+- **Concurrency safety nets** — version-based change detection
+  (`save(check_version=True)`) and protected-range locking
+  (`exclusive_edit()`)
+- **Snapshots** — git-diff-friendly JSON export of the entire spreadsheet
+  state
+
+### Not supported
+
+- **Charts** — column / line / pie / scatter, etc. Pass through the API
+  but no wrapper.
+- **Pivot tables**
+- **Slicers**
+- **Banded ranges** — alternating row colors
+- **Conditional formatting** — color scales, data bars, rule-based cell
+  highlighting
+- **Data validation** — dropdowns, checkboxes, custom validation rules
+- **Filter views** and **basic filter**
+- **Row / column groups** — collapsible outlines
+- **Named ranges**
+- **Smart chips** — people chips, file chips, calendar chips, finance
+  chips, place chips
+- **Drop-down chips** — the new in-cell chip-style dropdowns
+- **Embedded images** — both in-cell (`IMAGE()` and pasted) and
+  over-the-grid images
+- **Rich text within a cell** — multiple fonts, colors, or links within
+  the same cell (`textFormatRuns` is read but only the cell-level format
+  is preserved)
+- **Bulk range I/O** — `values.batchGet` / `values.batchUpdate` aren't
+  wrapped; each `cell.value = ...` queues its own `updateCells` request,
+  so writing 1000 distinct cells is 1000 queued requests (adjacent
+  identical-shape writes do auto-merge — see `utils.merge_requests`)
+- **Find and replace**, **autoresize columns**, **copy/duplicate sheet**,
+  **append row** — common ops without wrappers (use raw API via
+  `SheetsService.resource`)
+
+### Architectural limits
+
+- **No transactional updates.** Sheets has no compare-and-swap primitive.
+  Both opt-in safety nets (`check_version`, `exclusive_edit`) are
+  best-effort, not transactional. See [concurrency.md](concurrency.md).
+- **No time travel.** Drive revisions exist, but the Sheets-native API
+  doesn't support reading at a specific revision — only XLSX / PDF exports
+  are revision-aware.

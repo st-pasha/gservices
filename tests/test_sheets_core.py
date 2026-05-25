@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gservices.sheets.cell_value import Formula, HyperlinkFormula
-from gservices.sheets.spreadsheet import Spreadsheet
+from gservices.sheets.spreadsheet import Spreadsheet, SpreadsheetVersionMismatchError
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -800,3 +800,108 @@ class TestRowRemoveSentinel:
         col.remove()
         with pytest.raises(RuntimeError, match="removed"):
             _ = col.metadata
+
+
+# ----------------------------------------------------------------------------
+# Spreadsheet.save(check_version=True) — concurrent-edit detection
+# ----------------------------------------------------------------------------
+
+class TestSaveCheckVersion:
+    """Open with `track_version=True` and `save(check_version=True)` to detect
+    third-party edits between load and save."""
+
+    def _ss_with_version_tracking(
+        self,
+        *,
+        drive_versions: list[str],
+        batch_replies: list[dict[str, Any]] | None = None,
+    ) -> tuple[Spreadsheet, MagicMock]:
+        """Build a Spreadsheet whose Drive resource returns `drive_versions`
+        on successive `.files().get(...).execute()` calls. Optional
+        `batch_replies` configure batchUpdate responses."""
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [{
+                "properties": {"sheetId": 0, "title": "S", "index": 0},
+                "data": [],
+            }],
+        }
+        service = MagicMock()
+        # Drive resource — successive .execute() calls cycle through the list.
+        drive_get_execute = (
+            service._google.Drive.resource.files.return_value.get
+            .return_value.execute
+        )
+        drive_get_execute.side_effect = [{"version": v} for v in drive_versions]
+        # Sheets batchUpdate — minimal response that doesn't error out save().
+        sheets_batch_execute = (
+            service.resource.spreadsheets.return_value.batchUpdate
+            .return_value.execute
+        )
+        sheets_batch_execute.return_value = {"replies": batch_replies or []}
+        ss = Spreadsheet(cast("gs.Spreadsheet", data), service)
+        # Simulate `Sheets.open(track_version=True)` capturing the baseline.
+        ss._baseline_version = ss._fetch_drive_version()
+        return ss, service
+
+    def test_check_version_without_tracking_raises(self):
+        # No track_version=True, so _baseline_version is None — using
+        # check_version=True is a programming error.
+        data = _sheet_data(row_data=[_row("a")])
+        ss = _make_spreadsheet(data)
+        # Queue a no-op-ish change so save() actually runs past the early-out.
+        ss._add_request({"updateCells": {"rows": [], "fields": "userEnteredValue"}})
+        with pytest.raises(ValueError, match="track_version"):
+            ss.save(check_version=True)
+
+    def test_save_unchanged_version_succeeds(self):
+        # Baseline=10, current=10 → no mismatch. Then post-save version
+        # refresh returns 11 (our own write bumped it).
+        ss, _ = self._ss_with_version_tracking(
+            drive_versions=["10", "10", "11"],
+        )
+        assert ss._baseline_version == 10
+        ss._add_request({"updateCells": {"rows": [], "fields": "userEnteredValue"}})
+        ss.save(check_version=True)
+        # Baseline has been refreshed to the post-save value.
+        assert ss._baseline_version == 11
+
+    def test_save_changed_version_raises(self):
+        # Baseline=10, current=11 → someone else edited the file. Raise
+        # before sending any batchUpdate.
+        ss, service = self._ss_with_version_tracking(
+            drive_versions=["10", "11"],
+        )
+        ss._add_request({"updateCells": {"rows": [], "fields": "userEnteredValue"}})
+        with pytest.raises(SpreadsheetVersionMismatchError) as exc:
+            ss.save(check_version=True)
+        assert exc.value.baseline == 10
+        assert exc.value.current == 11
+        # And no batchUpdate was sent.
+        batch_call = service.resource.spreadsheets.return_value.batchUpdate
+        assert batch_call.call_count == 0
+        # Pending updates remain queued so the user can decide what to do.
+        assert len(ss._pending_updates) == 1
+
+    def test_unchecked_save_still_refreshes_baseline_when_tracking(self):
+        # If tracking is enabled but the user calls save() without
+        # check_version=True, baseline still refreshes after a successful
+        # save so future checked saves don't spuriously mismatch.
+        ss, _ = self._ss_with_version_tracking(
+            drive_versions=["5", "6"],
+        )
+        ss._add_request({"updateCells": {"rows": [], "fields": "userEnteredValue"}})
+        ss.save()  # unchecked
+        assert ss._baseline_version == 6
+
+    def test_save_without_pending_updates_short_circuits(self):
+        # No pending updates → save() is a no-op even with check_version.
+        # The version check still fires (to catch desync state), but no
+        # batchUpdate is sent.
+        ss, service = self._ss_with_version_tracking(
+            drive_versions=["10", "10"],
+        )
+        ss.save(check_version=True)
+        batch_call = service.resource.spreadsheets.return_value.batchUpdate
+        assert batch_call.call_count == 0

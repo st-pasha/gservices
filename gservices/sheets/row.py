@@ -1,20 +1,21 @@
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, ClassVar, Literal, override
+
+from gservices.sheets.dimension import Dimension
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
 
 
-class Row:
-    def __init__(self, index: int, sheet: Sheet):
-        assert index >= 0
-        self._index = index
-        self._sheet: Sheet = sheet
-        self._metadata: RowDeveloperMetadata | None = None
+class Row(Dimension):
+    """A single row within a Sheet. Indexed from 0."""
 
-    @property
-    def index(self) -> int:
-        return self._index
+    _DIMENSION: ClassVar[Literal["ROWS", "COLUMNS"]] = "ROWS"
+    _METADATA_KEY: ClassVar[Literal["rowMetadata", "columnMetadata"]] = "rowMetadata"
+
+    def __init__(self, index: int, sheet: Sheet):
+        super().__init__(index, sheet)
+        self._metadata: RowDeveloperMetadata | None = None
 
     @property
     def height(self) -> int:
@@ -25,16 +26,6 @@ class Row:
         if value == self.height:
             return
         self._set_property("pixelSize", value)
-
-    @property
-    def hidden(self) -> bool:
-        return self._properties.get("hiddenByUser", False)
-
-    @hidden.setter
-    def hidden(self, value: bool) -> None:
-        if value == self.hidden:
-            return
-        self._set_property("hiddenByUser", value)
 
     @property
     def values(self) -> Sequence[str]:
@@ -78,7 +69,7 @@ class Row:
         sheet._handle_row_removed(index)
         sheet.rows._handle_row_removed(index)
         self._index = -1
-        self._sheet = None  # type: ignore
+        self._sheet = None  # type: ignore[assignment]
 
     def move(
         self,
@@ -115,7 +106,11 @@ class Row:
         sheet._spreadsheet._add_request({"moveDimension": request})
         sheet._handle_row_moved(old_index, new_index)
         sheet.rows._handle_row_moved(old_index, new_index)
-        assert self.index == new_index
+        # Google Sheets API's `destinationIndex` is pre-move; after the source
+        # range is removed and re-inserted, a forward move lands one slot
+        # earlier than the requested index.
+        expected = new_index - 1 if new_index > old_index else new_index
+        assert self.index == expected
 
     def __len__(self) -> int:
         return self._sheet.column_count
@@ -123,34 +118,11 @@ class Row:
     def __getitem__(self, col: int) -> Cell:
         return self._sheet.cell(self._index, col)
 
-    @property
-    def _properties(self) -> gs.DimensionProperties:
-        self._sheet._load_data()
-        grid_data = self._sheet._cell_data
-        assert grid_data is not None
-        if (row_list := grid_data.get("rowMetadata")) and self._index < len(row_list):
-            return row_list[self._index]
-        return {}
-
-    def _set_property(self, property: str, value: Any) -> None:
-        update_properties: gs.DimensionProperties = {}
-        set_dotted_property(self._properties, property, value)
-        set_dotted_property(update_properties, property, value)
-        self._sheet._spreadsheet._add_request({
-            "updateDimensionProperties": {
-                "properties": update_properties,
-                "range": {
-                    "sheetId": self._sheet.id,
-                    "dimension": "ROWS",
-                    "startIndex": self._index,
-                    "endIndex": self._index + 1,
-                },
-                "fields": property,
-            }
-        })
+    @override
+    def __repr__(self) -> str:
+        return f"Row(index={self._index})"
 
 
 from gservices.sheets.cell import Cell
 from gservices.sheets.developer_metadata import RowDeveloperMetadata
 from gservices.sheets.sheet import Sheet
-from gservices.sheets.utils import set_dotted_property

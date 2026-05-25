@@ -7,6 +7,8 @@ don't depend on the snapshot pipeline.
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
+import pytest
+
 from gservices.sheets.cell_value import Formula, HyperlinkFormula
 from gservices.sheets.spreadsheet import Spreadsheet
 
@@ -346,3 +348,161 @@ class TestColumnsCaching:
         # Re-fetching the same Column at its new index returns the same object.
         assert cols[3] is col2
         assert cols[0] is col0
+
+
+# ----------------------------------------------------------------------------
+# Column navigation / mutation — symmetry with Row
+# ----------------------------------------------------------------------------
+
+class TestColumnNavigation:
+    """`Column.previous_column` / `next_column` should mirror Row's API."""
+
+    def test_previous_column(self):
+        data = _sheet_data(row_data=[_row("a", "b", "c")])
+        cols = _make_spreadsheet(data).sheets[0].columns
+        assert cols[0].previous_column is None
+        assert cols[1].previous_column is cols[0]
+        assert cols[2].previous_column is cols[1]
+
+    def test_next_column(self):
+        data = _sheet_data(row_data=[_row("a", "b", "c")])
+        cols = _make_spreadsheet(data).sheets[0].columns
+        assert cols[0].next_column is cols[1]
+        assert cols[1].next_column is cols[2]
+        assert cols[2].next_column is None
+
+    def test_repr(self):
+        data = _sheet_data(row_data=[_row("a", "b")])
+        cols = _make_spreadsheet(data).sheets[0].columns
+        assert "index=1" in repr(cols[1])
+
+
+class TestColumnRemoveMove:
+    """`Column.remove()` and `Column.move()` should mirror Row's API."""
+
+    def test_remove_shifts_remaining_columns(self):
+        data = _sheet_data(
+            row_data=[_row("a", "b", "c", "d")],
+            col_meta=[{}, {}, {}, {}],
+        )
+        sheet = _make_spreadsheet(data).sheets[0]
+        cols = sheet.columns
+        col_b = cols[1]
+        col_d = cols[3]
+
+        col_b.remove()
+
+        # Original column 'd' has shifted from index 3 → index 2.
+        assert col_d.index == 2
+        assert cols[2] is col_d
+        # Length decremented.
+        assert len(cols) == 3
+
+    def test_remove_makes_column_unusable(self):
+        # Mirrors Row's behavior: after remove(), the Column should not be
+        # used. Today's sentinel is `_sheet = None`, so subsequent attribute
+        # access on `_sheet` blows up — PR 5 will replace with a clear error.
+        data = _sheet_data(
+            row_data=[_row("a", "b")],
+            col_meta=[{}, {}],
+        )
+        col = _make_spreadsheet(data).sheets[0].columns[0]
+        col.remove()
+        # Accessing _sheet-dependent properties should not silently succeed.
+        with pytest.raises((AttributeError, TypeError)):
+            _ = col.width
+
+    def test_move_forward(self):
+        data = _sheet_data(
+            row_data=[_row("a", "b", "c", "d")],
+            col_meta=[{}, {}, {}, {}],
+        )
+        cols = _make_spreadsheet(data).sheets[0].columns
+        col_a = cols[0]
+        col_b = cols[1]
+        col_c = cols[2]
+
+        # Move column A to position 2 (after B). Result order: B, A, C, D
+        # (gap closes on the left, then 'A' lands at index 1).
+        col_a.move(index=2)
+
+        assert col_a.index == 1
+        assert col_b.index == 0
+        assert col_c.index == 2
+
+    def test_move_backward(self):
+        data = _sheet_data(
+            row_data=[_row("a", "b", "c", "d")],
+            col_meta=[{}, {}, {}, {}],
+        )
+        cols = _make_spreadsheet(data).sheets[0].columns
+        col_a = cols[0]
+        col_d = cols[3]
+
+        # Move column D to position 0 (in front). Result order: D, A, B, C.
+        col_d.move(index=0)
+
+        assert col_d.index == 0
+        assert col_a.index == 1
+
+
+# ----------------------------------------------------------------------------
+# Columns container — iteration and sort
+# ----------------------------------------------------------------------------
+
+class TestColumnsIter:
+    def test_iter_yields_all_columns(self):
+        data = _sheet_data(row_data=[_row("a", "b", "c")])
+        cols = _make_spreadsheet(data).sheets[0].columns
+        seen = list(cols)
+        assert len(seen) == 3
+        assert seen[0].index == 0
+        assert seen[1].index == 1
+        assert seen[2].index == 2
+
+
+class TestColumnsSort:
+    def test_sort_by_column_index(self):
+        # Sort by negated index to reverse the columns deterministically.
+        data = _sheet_data(
+            row_data=[_row("a", "b", "c")],
+            col_meta=[{}, {}, {}],
+        )
+        cols = _make_spreadsheet(data).sheets[0].columns
+        col_at_0 = cols[0]
+        col_at_2 = cols[2]
+        # Build the key from index so each column has a distinct sort key.
+        cols.sort(lambda c: -c.index)
+        # After sort, what was at index 2 → 0, what was at 0 → 2.
+        assert col_at_2.index == 0
+        assert col_at_0.index == 2
+
+
+# ----------------------------------------------------------------------------
+# Rows.insert — reconciled signature, now accepts int | Row
+# ----------------------------------------------------------------------------
+
+class TestRowsInsertSignature:
+    """`Rows.insert` should accept `int | Row` for both `before` and `after`,
+    matching `Columns.insert`."""
+
+    def test_insert_before_row_object(self):
+        data = _sheet_data(
+            row_data=[_row("a"), _row("b")],
+            row_meta=[{}, {}],
+        )
+        rows = _make_spreadsheet(data).sheets[0].rows
+        target = rows[1]
+        new_row = rows.insert(before=target)
+        assert new_row.index == 1
+        assert target.index == 2
+
+    def test_insert_after_row_object(self):
+        data = _sheet_data(
+            row_data=[_row("a"), _row("b")],
+            row_meta=[{}, {}],
+        )
+        rows = _make_spreadsheet(data).sheets[0].rows
+        target = rows[0]
+        new_row = rows.insert(after=target)
+        assert new_row.index == 1

@@ -195,6 +195,7 @@ class Sheet:
         self._set_property("gridProperties.hideGridlines", value)
 
     def print(self):
+        """Print a human-readable summary of this sheet to stdout (debug aid)."""
         pprint("[bold cyan]Sheet:")
         pprint(f"  [green]title:[/] [bold white]{self.title}")
         pprint(f"  [green]id:[/] {self.id}")
@@ -208,8 +209,8 @@ class Sheet:
         pprint(f"  [green]frozen_column_count:[/] {self.frozen_column_count}")
         pprint(f"  [green]hide_gridlines:[/] {self.hide_gridlines}")
         if self._cell_data is not None or self._cell_values is not None:
-            nrows = len(self.rows)
-            ncols = self.column_count
+            nrows = str(len(self.rows))
+            ncols = str(self.column_count)
         else:
             nrows = "?"
             ncols = "?"

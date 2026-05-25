@@ -43,11 +43,18 @@ class SheetsService:
     # ----------------------------------------------------------------------------------
 
     def __init__(self, resource: gr.SheetsResource, google: GoogleServices):
+        """Wrap a pre-built `googleapiclient` Sheets v4 resource.
+
+        Typically you don't call this directly — use `SheetsService.build()`
+        or the `GoogleServices.Sheets` accessor.
+        """
         self._resource = resource
         self._google = google
 
     @property
     def resource(self) -> gr.SheetsResource:
+        """The underlying `googleapiclient` resource. Use to escape-hatch to
+        raw API calls that this wrapper doesn't expose."""
         return self._resource
 
 

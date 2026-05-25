@@ -9,12 +9,22 @@ BorderStyle = Literal["DOTTED", "DASHED", "SOLID", "SOLID_MEDIUM", "SOLID_THICK"
 
 
 class BorderFormat:
+    """A single edge of a cell's border — style, width, and color.
+
+    Use via `CellFormat.border_top` / `border_right` / `border_bottom` /
+    `border_left`. Construct directly to assign:
+
+        cell.format.border_bottom = BorderFormat(style="SOLID", width=1)
+    """
+
     def __init__(
         self,
         style: BorderStyle = "SOLID",
         width: int = 0,
         color: str | None = "#000000",
     ):
+        # A border with width=0 is invisible, so a non-None style or color
+        # would be misleading — normalize them away.
         if width == 0:
             style = None
             color = None

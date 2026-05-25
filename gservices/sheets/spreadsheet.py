@@ -199,6 +199,7 @@ class Spreadsheet:
         return file
 
     def print(self):
+        """Print a human-readable summary of this spreadsheet to stdout (debug aid)."""
         pprint("[bold cyan]Spreadsheet:")
         pprint(f"  [green]title:[/] [bold white]{self.title}")
         pprint(f"  [green]id:[/] {self.id}")

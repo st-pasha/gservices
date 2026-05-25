@@ -31,6 +31,7 @@ class Cell:
 
     @property
     def url(self) -> str:
+        """A deep-link URL that opens this cell in the Sheets web UI."""
         return f"{self._sheet.url}&range={self.name}"
 
     @property
@@ -114,6 +115,12 @@ class Cell:
 
     @property
     def format(self) -> CellFormat:
+        """The cell's effective format — fonts, colors, borders, alignment.
+
+        Returns a `CellFormat` wrapper bound to this cell; mutations via the
+        wrapper (e.g. `cell.format.is_bold = True`) queue update requests on
+        the parent spreadsheet.
+        """
         if self._format is None:
             self._format = CellFormat(self._data.get("effectiveFormat", {}), self)
         return self._format
@@ -132,6 +139,7 @@ class Cell:
         self._set_property("userEnteredFormat", raw)
 
     def print(self, indent: str = "") -> None:
+        """Print a human-readable summary of this cell to stdout (debug aid)."""
         if indent:
             i = indent
         else:

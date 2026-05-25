@@ -264,6 +264,7 @@ class CellFormat:
         self._set_property(f"borders.{edge}", obj)
 
     def print(self, indent: str = ""):
+        """Print every format attribute on this cell to stdout (debug aid)."""
         if indent:
             i = indent
         else:

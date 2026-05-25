@@ -8,6 +8,26 @@ if TYPE_CHECKING:
     from gservices.sheets.snapshot import SpreadsheetSnapshot
 
 
+class SpreadsheetVersionMismatchError(RuntimeError):
+    """Raised by `Spreadsheet.save(check_version=True)` when the spreadsheet
+    has been modified externally since it was loaded (or since the last
+    successful save).
+
+    Attributes:
+      - baseline: the Drive file version the local state was based on.
+      - current: the current Drive file version on the server.
+    """
+
+    def __init__(self, baseline: int, current: int):
+        super().__init__(
+            f"Spreadsheet has been modified externally "
+            f"(baseline version {baseline}, current {current}). "
+            f"Re-open the spreadsheet and reapply your changes."
+        )
+        self.baseline = baseline
+        self.current = current
+
+
 class Spreadsheet:
     """
     [Spreadsheet] represents a single Google Sheets document, stored on Google Drive.
@@ -20,6 +40,11 @@ class Spreadsheet:
     Spreadsheet properties and cell values can be modified through this object. All such
     changes will be queued until you run [save()], at which point they will be uploaded
     to the server in one or more batches.
+
+    Concurrency: to detect concurrent edits by other users, open with
+    `track_version=True` and call `save(check_version=True)`. The save will
+    raise `SpreadsheetVersionMismatchError` if the file's Drive version has
+    changed since load (or the last successful save).
     """
 
     BATCH_SIZE = 500
@@ -39,6 +64,10 @@ class Spreadsheet:
         # on the next `save()`.
         self._pending_updates: list[gs.Request] = []
         self._pending_callbacks: list[Callable[[gs.Response], None] | None] = []
+        # Drive file version we believe the local state is based on, set when
+        # the spreadsheet is opened with `track_version=True`. `None` means
+        # tracking is disabled — `save(check_version=True)` will raise.
+        self._baseline_version: int | None = None
 
     def _load_all_data(self, include_computed: bool = False) -> None:
         """Loads cell data for every sheet that doesn't yet have it, in a
@@ -81,10 +110,32 @@ class Spreadsheet:
                 if blocks:
                     sheet._cell_data = blocks[0]
 
-    def save(self) -> None:
+    def save(self, check_version: bool = False) -> None:
         """
         Saves any pending changes to the spreadsheet file stored in Google Cloud.
+
+        If [check_version] is True, the Drive file version is fetched and
+        compared against the baseline captured at load time (see
+        `SheetsService.open(track_version=True)`). If the version has changed,
+        `SpreadsheetVersionMismatchError` is raised and no changes are sent
+        to the server.
+
+        Note: `save(check_version=True)` is best-effort, not transactional.
+        The Sheets API has no compare-and-swap primitive — a remote edit
+        landing between the version check and the batchUpdate will not be
+        caught. The window is small (a single round-trip) but non-zero.
         """
+        if check_version:
+            if self._baseline_version is None:
+                raise ValueError(
+                    "save(check_version=True) requires version tracking — "
+                    "open the spreadsheet with track_version=True"
+                )
+            current = self._fetch_drive_version()
+            if current != self._baseline_version:
+                raise SpreadsheetVersionMismatchError(
+                    baseline=self._baseline_version, current=current
+                )
         if not self._pending_updates:
             return
         i0 = 0
@@ -109,6 +160,21 @@ class Spreadsheet:
             i0 += Spreadsheet.BATCH_SIZE
         self._pending_updates = []
         self._pending_callbacks = []
+        if self._baseline_version is not None:
+            # Refresh the baseline so the next checked save compares against
+            # the post-save server state.
+            self._baseline_version = self._fetch_drive_version()
+
+    def _fetch_drive_version(self) -> int:
+        """Fetches the current Drive file version. Used for `track_version`
+        baseline capture and `check_version` enforcement."""
+        drive_resource = self._service._google.Drive.resource
+        data = (
+            drive_resource.files()
+            .get(fileId=self._id, fields="version", supportsAllDrives=True)
+            .execute()
+        )
+        return int(data.get("version", 0))
 
     # ----------------------------------------------------------------------------------
     # Basic properties

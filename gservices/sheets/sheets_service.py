@@ -23,6 +23,7 @@ class SheetsService:
         self,
         spreadsheet_id: str,
         load: bool = False,
+        track_version: bool = False,
     ) -> Spreadsheet:
         """
         Loads the spreadsheet with ID [spreadsheet_id].
@@ -30,13 +31,21 @@ class SheetsService:
         If the [load] parameter is True, then the grid data for all sheets will also
         be loaded. When the parameter is False (default), only the sheet names and
         their basic properties are loaded. The data can be loaded later on-demand.
+
+        If [track_version] is True, the Drive file version is captured as a
+        baseline so subsequent `save(check_version=True)` calls can detect
+        concurrent edits by other users. Costs one extra Drive API call at
+        open time.
         """
         data = (
             self._resource.spreadsheets()
             .get(spreadsheetId=spreadsheet_id, includeGridData=load)
             .execute()
         )
-        return Spreadsheet(data, self)
+        spreadsheet = Spreadsheet(data, self)
+        if track_version:
+            spreadsheet._baseline_version = spreadsheet._fetch_drive_version()
+        return spreadsheet
 
     # ----------------------------------------------------------------------------------
     # Private

@@ -4,6 +4,7 @@ class Columns:
     def __init__(self, sheet: Sheet):
         self._sheet = sheet
         self._ncols: int | None = None
+        self._columns: dict[int, Column] = {}
 
     def __len__(self) -> int:
         """
@@ -34,7 +35,11 @@ class Columns:
         self._sheet.max_column_count = value
 
     def __getitem__(self, index: int) -> Column:
-        return Column(index, self._sheet)
+        column = self._columns.get(index)
+        if column is None:
+            column = Column(index, self._sheet)
+            self._columns[index] = column
+        return column
 
     def insert(
         self,
@@ -79,6 +84,14 @@ class Columns:
     def _handle_column_inserted(self, index: int):
         if self._ncols is not None:
             self._ncols += 1
+        # Shift cached Column objects at or past `index` one slot to the right.
+        shifted: list[tuple[int, Column]] = []
+        for i in [k for k in self._columns if k >= index]:
+            column = self._columns.pop(i)
+            column._index = i + 1
+            shifted.append((i + 1, column))
+        for new_i, column in shifted:
+            self._columns[new_i] = column
 
 
 from gservices.sheets.column import Column

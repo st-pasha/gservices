@@ -442,8 +442,14 @@ class Sheet:
         if self._cell_values is not None:
             self._cell_values.insert(inserted_index, [""] * self.column_count)
         if self._cell_data is not None:
-            self._cell_data.get("rowData", []).insert(inserted_index, {"values": []})
-            self._cell_data.get("rowMetadata", []).insert(inserted_index, {})
+            # setdefault — `.get(k, [])` returns a fresh list when the key is
+            # missing, and `.insert()` on that throwaway is silently lost.
+            self._cell_data.setdefault("rowData", []).insert(
+                inserted_index, {"values": []}
+            )
+            self._cell_data.setdefault("rowMetadata", []).insert(
+                inserted_index, {}
+            )
         update_keys = [key for key in self._cell_cache if key[0] >= inserted_index]
         for key in update_keys:
             cell = self._cell_cache.pop(key)

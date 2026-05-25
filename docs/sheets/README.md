@@ -150,13 +150,15 @@ See [spreadsheet.md](spreadsheet.md) for `save()` semantics.
 - **Rich text within a cell** — multiple fonts, colors, or links within
   the same cell (`textFormatRuns` is read but only the cell-level format
   is preserved)
-- **Bulk range I/O** — `values.batchGet` / `values.batchUpdate` aren't
-  wrapped; each `cell.value = ...` queues its own `updateCells` request,
-  so writing 1000 distinct cells is 1000 queued requests (adjacent
-  identical-shape writes do auto-merge — see `utils.merge_requests`)
-- **Find and replace**, **autoresize columns**, **copy/duplicate sheet**,
-  **append row** — common ops without wrappers (use raw API via
-  `SheetsService.resource`)
+- **Bulk range I/O** — `values.batchGet`, `values.batchUpdate`, and
+  `values.append` aren't wrapped; each `cell.value = ...` queues its own
+  `updateCells` request, so writing 1000 distinct cells is 1000 queued
+  requests (adjacent identical-shape writes do auto-merge — see
+  `utils.merge_requests`). `sheet.rows.insert()` appends a single empty
+  row at the bottom of the data region, but appending many rows of data
+  in one HTTP call needs `values.append`.
+- **Find and replace**, **autoresize columns**, **copy/duplicate sheet** —
+  common ops without wrappers (use raw API via `SheetsService.resource`)
 
 ### Architectural limits
 

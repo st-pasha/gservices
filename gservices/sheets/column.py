@@ -64,7 +64,7 @@ class Column(Dimension):
         sheet._handle_column_removed(index)
         sheet.columns._handle_column_removed(index)
         self._index = -1
-        self._sheet = None  # type: ignore[assignment]
+        self._removed = True
 
     def move(
         self,

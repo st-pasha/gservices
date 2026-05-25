@@ -215,55 +215,53 @@ class CellFormat:
 
     @property
     def border_top(self) -> BorderFormat | None:
-        top_data = self._data.get("borders", {}).get("top")
-        if top_data is not None:
-            return BorderFormat.from_data(top_data)
+        return self._get_border("top")
 
     @border_top.setter
     def border_top(self, value: BorderFormat | None) -> None:
-        if value == self.border_top:
-            return
-        obj: gs.Border = {} if value is None else value.to_data()
-        self._set_property("borders.top", obj)
+        self._set_border("top", value)
 
     @property
     def border_right(self) -> BorderFormat | None:
-        right_data = self._data.get("borders", {}).get("right")
-        if right_data is not None:
-            return BorderFormat.from_data(right_data)
+        return self._get_border("right")
 
     @border_right.setter
     def border_right(self, value: BorderFormat | None) -> None:
-        if value == self.border_right:
-            return
-        obj: gs.Border = {} if value is None else value.to_data()
-        self._set_property("borders.right", obj)
+        self._set_border("right", value)
 
     @property
     def border_bottom(self) -> BorderFormat | None:
-        bottom_data = self._data.get("borders", {}).get("bottom")
-        if bottom_data is not None:
-            return BorderFormat.from_data(bottom_data)
+        return self._get_border("bottom")
 
     @border_bottom.setter
     def border_bottom(self, value: BorderFormat | None) -> None:
-        if value == self.border_bottom:
-            return
-        obj: gs.Border = {} if value is None else value.to_data()
-        self._set_property("borders.bottom", obj)
+        self._set_border("bottom", value)
 
     @property
     def border_left(self) -> BorderFormat | None:
-        left_data = self._data.get("borders", {}).get("left")
-        if left_data is not None:
-            return BorderFormat.from_data(left_data)
+        return self._get_border("left")
 
     @border_left.setter
     def border_left(self, value: BorderFormat | None) -> None:
-        if value == self.border_left:
+        self._set_border("left", value)
+
+    def _get_border(
+        self, edge: Literal["top", "right", "bottom", "left"]
+    ) -> BorderFormat | None:
+        data = self._data.get("borders", {}).get(edge)
+        if data is not None:
+            return BorderFormat.from_data(data)
+        return None
+
+    def _set_border(
+        self,
+        edge: Literal["top", "right", "bottom", "left"],
+        value: BorderFormat | None,
+    ) -> None:
+        if value == self._get_border(edge):
             return
         obj: gs.Border = {} if value is None else value.to_data()
-        self._set_property("borders.left", obj)
+        self._set_property(f"borders.{edge}", obj)
 
     def print(self, indent: str = ""):
         if indent:

@@ -23,7 +23,16 @@ class Dimension:
     def __init__(self, index: int, sheet: Sheet):
         assert index >= 0
         self._index = index
-        self._sheet: Sheet = sheet
+        self._sheet_ref: Sheet = sheet
+        self._removed = False
+
+    @property
+    def _sheet(self) -> Sheet:
+        if self._removed:
+            raise RuntimeError(
+                f"This {type(self).__name__} has been removed from the sheet"
+            )
+        return self._sheet_ref
 
     @property
     def index(self) -> int:

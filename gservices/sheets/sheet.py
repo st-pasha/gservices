@@ -376,6 +376,17 @@ class Sheet:
         assert "data" in data["sheets"][0] and len(data["sheets"][0]["data"]) == 1
         self._cell_data = data["sheets"][0]["data"][0]
 
+    def _invalidate(self) -> None:
+        """Clears all cached data so the next access re-fetches. Rebuilds
+        the `rows` / `columns` wrappers so their length caches reset, and
+        clears the cell cache so user-held `Cell` references become stale
+        (they should be re-fetched via `sheet.cell(...)` after reload)."""
+        self._cell_data = None
+        self._cell_values = None
+        self._cell_cache.clear()
+        self._rows = Rows(self)
+        self._columns = Columns(self)
+
     def _load_values(self) -> None:
         data = (
             self._spreadsheet._service.resource.spreadsheets()

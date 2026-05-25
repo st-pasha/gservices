@@ -130,6 +130,38 @@ identical-target writes merge.
 (the underlying `googleapiclient` raises on HTTP errors) and inspect
 spreadsheet state after.
 
+## `reload()`
+
+```python
+ss.reload()                     # refresh cell data for all loaded sheets
+ss.reload(include_computed=True)  # also fetch computed (formula) values
+```
+
+`reload()` re-fetches cell data, in one batched API call, for every sheet
+that already had data loaded. Sheets that were never loaded are not
+eager-fetched (`reload()` respects the lazy-load opt-in from `open()`).
+
+Use it when you suspect local state is stale relative to the server. The
+canonical case is inside an `exclusive_edit()` block — see
+[concurrency.md](concurrency.md).
+
+**Important: existing `Cell`, `Row`, and `Column` references are stale
+after `reload()`.** Their backing `_data` points at the discarded
+`_cell_data`. Re-fetch via `sheet.cell(...)`, `sheet.rows[...]`,
+`sheet.columns[...]`:
+
+```python
+old_cell = ss.sheets[0].cell(0, 0)
+ss.reload()
+# DON'T: old_cell.value = "x"      ← writes through a stale reference
+# DO:    ss.sheets[0].cell(0, 0).value = "x"
+```
+
+**What `reload()` doesn't refresh**: spreadsheet properties (title, locale,
+theme), sheet developer metadata, merged ranges, protected ranges, charts,
+or other sub-objects this wrapper doesn't model. For a fully fresh view,
+re-open via `Sheets.open(id)`.
+
 ## The Drive side
 
 `ss.file` gives you the corresponding `SpreadsheetFile` from the Drive

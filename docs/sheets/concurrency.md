@@ -84,10 +84,35 @@ affected sheets as read-only until the block exits.
 ```python
 with ss.exclusive_edit():
     # Other editors are blocked from modifying any sheet for the duration.
+    ss.reload()                  # see "Why reload?" below
     fresh_cell = ss.sheets[0].cell(7, 5)
     fresh_cell.value = "done"
     # pending updates flushed on normal exit; protection released afterwards
 ```
+
+### Why `reload()` inside the block
+
+Protection only stops *future* edits. Anything you loaded *before* the
+lock might be stale relative to edits that landed in the small window
+between your initial fetch and the lock taking effect — or in the much
+larger window between your initial fetch and entering the `with` block
+(if you held the `Spreadsheet` for a while). `ss.reload()` re-fetches
+the cell data for every loaded sheet from the server, so what you read
+next reflects post-lock authoritative state.
+
+```python
+ss = google.Sheets.open(id, load=True)
+# minutes pass; another user might have edited
+with ss.exclusive_edit():
+    ss.reload()                  # discard stale local view
+    # ... now reads are authoritative
+```
+
+`reload()` doesn't eagerly load sheets that weren't already loaded — it
+only refreshes ones with data. Any `Cell`, `Row`, or `Column` references
+you held before `reload()` are stale after; re-fetch via `sheet.cell(...)`
+inside the block. See [spreadsheet.md](spreadsheet.md#reload) for the
+full semantics.
 
 ### What other users see
 

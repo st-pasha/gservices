@@ -79,7 +79,11 @@ class Spreadsheet:
         # tracking is disabled — `save(check_version=True)` will raise.
         self._baseline_version: int | None = None
 
-    def _load_all_data(self, include_computed: bool = False) -> None:
+    def _load_all_data(
+        self,
+        include_computed: bool = False,
+        only_sheets: list[Sheet] | None = None,
+    ) -> None:
         """Loads cell data for every sheet that doesn't yet have it, in a
         single API call. Much faster than letting each sheet hit the API
         independently when the spreadsheet has many sheets.
@@ -88,8 +92,13 @@ class Spreadsheet:
         sheet data that the snapshot builder reads — skipping `formattedValue`,
         `userEnteredFormat`, `textFormatRuns`, validation, pivot tables, etc.
         For typical formatted documents this halves the response size.
+
+        `only_sheets`, if given, limits which sheets are considered candidates
+        for loading — used by `reload()` to avoid eager-loading sheets that
+        the caller never asked for.
         """
-        missing = [sheet for sheet in self._sheets if sheet._cell_data is None]
+        candidates = only_sheets if only_sheets is not None else self._sheets
+        missing = [sheet for sheet in candidates if sheet._cell_data is None]
         if not missing:
             return
         cell_fields = ["userEnteredValue", "effectiveFormat", "note", "hyperlink"]
@@ -185,6 +194,43 @@ class Spreadsheet:
             .execute()
         )
         return int(data.get("version", 0))
+
+    def reload(self, include_computed: bool = False) -> None:
+        """
+        Re-fetches cell data for every sheet that already had data loaded,
+        in a single batched API call. Local cell data, the formatted-values
+        cache, and the cell cache are replaced with authoritative server
+        state.
+
+        Sheets that were never loaded are NOT eager-loaded (their lazy-load
+        on next access still works as before). To force-load everything,
+        open the spreadsheet with `Sheets.open(id, load=True)` instead.
+
+        IMPORTANT: any `Cell`, `Row`, or `Column` references obtained
+        before `reload()` become stale — their backing `_data` points
+        to the discarded `_cell_data`, and reads/writes through them
+        produce undefined results. Re-fetch via `sheet.cell(...)`,
+        `sheet.rows[...]`, `sheet.columns[...]` after `reload()`.
+
+        Typical use is inside `exclusive_edit()` — protection only blocks
+        future edits, so anything loaded *before* the lock might be stale
+        relative to edits that landed in the window before the lock took
+        effect. Reload inside the block to get a clean baseline.
+
+        Does NOT refresh: spreadsheet properties (title, theme, locale),
+        sheet developer metadata, merged ranges, protected ranges, or any
+        sheet sub-object this wrapper doesn't model. For a fully fresh
+        view, re-open via `Sheets.open(id)`.
+        """
+        loaded = [s for s in self._sheets if s._cell_data is not None]
+        if not loaded:
+            return
+        for sheet in loaded:
+            sheet._invalidate()
+        self._load_all_data(
+            include_computed=include_computed,
+            only_sheets=loaded,
+        )
 
     @contextmanager  # pyright: ignore[reportDeprecated]
     def exclusive_edit(

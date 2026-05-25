@@ -506,3 +506,175 @@ class TestRowsInsertSignature:
         target = rows[0]
         new_row = rows.insert(after=target)
         assert new_row.index == 1
+
+
+# ----------------------------------------------------------------------------
+# Spreadsheet.add_sheet — server ID reconciliation + property pass-through
+# ----------------------------------------------------------------------------
+
+class TestAddSheet:
+    """`add_sheet` queues an `addSheet` request and must reconcile the
+    server-assigned sheetId via response callback. Also pass-through for
+    rowCount / columnCount / hideGridlines / tabColorStyle."""
+
+    def _make_with_mock_service(
+        self, batch_replies: list[dict[str, Any]]
+    ) -> tuple[Spreadsheet, MagicMock]:
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [{
+                "properties": {
+                    "sheetId": 0,
+                    "title": "Initial",
+                    "index": 0,
+                    "gridProperties": {"rowCount": 100, "columnCount": 26},
+                },
+                "data": [],
+            }],
+        }
+        service = MagicMock()
+        # Stub the batchUpdate response so save() can iterate replies.
+        spreadsheets = service.resource.spreadsheets.return_value
+        spreadsheets.batchUpdate.return_value.execute.return_value = {
+            "replies": batch_replies,
+        }
+        ss = Spreadsheet(cast("gs.Spreadsheet", data), service)
+        return ss, service
+
+    def _captured_request(self, service: MagicMock) -> dict[str, Any]:
+        """Pull the single request body out of the captured batchUpdate call."""
+        spreadsheets = service.resource.spreadsheets.return_value
+        call_kwargs = spreadsheets.batchUpdate.call_args.kwargs
+        body = call_kwargs["body"]
+        requests = body["requests"]
+        assert len(requests) == 1
+        return requests[0]
+
+    def test_add_sheet_queues_request_with_name(self):
+        ss, service = self._make_with_mock_service(
+            [{"addSheet": {"properties": {"sheetId": 1, "title": "X"}}}]
+        )
+        new_sheet = ss.add_sheet("X")
+        assert new_sheet.title == "X"
+        # Local heuristic ID (max existing + 1) — before save().
+        assert new_sheet.id == 1
+
+        ss.save()
+
+        # batchUpdate was called with one addSheet request.
+        request = self._captured_request(service)
+        assert "addSheet" in request
+        properties = request["addSheet"]["properties"]
+        assert properties["title"] == "X"
+
+    def test_add_sheet_reconciles_server_assigned_id(self):
+        # The server may assign a different ID than our heuristic (max+1).
+        # The response callback must patch the Sheet.id to the real one.
+        ss, _ = self._make_with_mock_service(
+            [{"addSheet": {"properties": {"sheetId": 42, "title": "X"}}}]
+        )
+        new_sheet = ss.add_sheet("X")
+        assert new_sheet.id == 1  # heuristic before save
+
+        ss.save()
+
+        assert new_sheet.id == 42  # reconciled with server response
+        # And resolving by name still returns the same Sheet object.
+        assert ss.sheet("X") is new_sheet
+
+    def test_add_sheet_passes_row_and_column_count(self):
+        ss, service = self._make_with_mock_service(
+            [{"addSheet": {"properties": {"sheetId": 1, "title": "Y"}}}]
+        )
+        ss.add_sheet("Y", row_count=50, column_count=10)
+        ss.save()
+
+        properties = self._captured_request(service)["addSheet"]["properties"]
+        grid = properties.get("gridProperties", {})
+        assert grid["rowCount"] == 50
+        assert grid["columnCount"] == 10
+
+    def test_add_sheet_passes_hide_gridlines(self):
+        ss, service = self._make_with_mock_service(
+            [{"addSheet": {"properties": {"sheetId": 1, "title": "Z"}}}]
+        )
+        ss.add_sheet("Z", hide_gridlines=True)
+        ss.save()
+
+        properties = self._captured_request(service)["addSheet"]["properties"]
+        assert properties.get("gridProperties", {}).get("hideGridlines") is True
+
+    def test_add_sheet_passes_tab_color(self):
+        ss, service = self._make_with_mock_service(
+            [{"addSheet": {"properties": {"sheetId": 1, "title": "C"}}}]
+        )
+        ss.add_sheet("C", tab_color="#ff8800")
+        ss.save()
+
+        properties = self._captured_request(service)["addSheet"]["properties"]
+        tab_color = properties.get("tabColorStyle", {})
+        assert "rgbColor" in tab_color
+
+    def test_add_sheet_with_no_existing_sheets(self):
+        # max(...) on an empty iterable would crash without a default.
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [],
+        }
+        service = MagicMock()
+        service.resource.spreadsheets.return_value.batchUpdate.return_value.execute.return_value = {
+            "replies": [{"addSheet": {"properties": {"sheetId": 1, "title": "First"}}}],
+        }
+        ss = Spreadsheet(cast("gs.Spreadsheet", data), service)
+        new_sheet = ss.add_sheet("First")
+        # Before save: heuristic 0 (max of empty default=-1, plus 1).
+        assert new_sheet.id == 0
+        ss.save()
+        # After save: server-assigned 1.
+        assert new_sheet.id == 1
+
+
+# ----------------------------------------------------------------------------
+# Spreadsheet.delete_sheet — parameter rebinding cleanup
+# ----------------------------------------------------------------------------
+
+class TestDeleteSheet:
+    def test_delete_by_name(self):
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [
+                {"properties": {"sheetId": 0, "title": "A", "index": 0}, "data": []},
+                {"properties": {"sheetId": 1, "title": "B", "index": 1}, "data": []},
+            ],
+        }
+        ss = _make_spreadsheet(data)
+        ss.delete_sheet("A")
+        assert [s.title for s in ss.sheets] == ["B"]
+
+    def test_delete_by_object(self):
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [
+                {"properties": {"sheetId": 0, "title": "A", "index": 0}, "data": []},
+                {"properties": {"sheetId": 1, "title": "B", "index": 1}, "data": []},
+            ],
+        }
+        ss = _make_spreadsheet(data)
+        ss.delete_sheet(ss.sheets[0])
+        assert [s.title for s in ss.sheets] == ["B"]
+
+    def test_delete_missing_raises_keyerror(self):
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [
+                {"properties": {"sheetId": 0, "title": "A", "index": 0}, "data": []},
+            ],
+        }
+        ss = _make_spreadsheet(data)
+        with pytest.raises(KeyError):
+            ss.delete_sheet("Nonexistent")

@@ -69,7 +69,7 @@ class Row(Dimension):
         sheet._handle_row_removed(index)
         sheet.rows._handle_row_removed(index)
         self._index = -1
-        self._sheet = None  # type: ignore[assignment]
+        self._removed = True
 
     def move(
         self,

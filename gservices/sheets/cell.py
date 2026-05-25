@@ -119,10 +119,17 @@ class Cell:
         return self._format
 
     @format.setter
-    def format(self, value: gs.CellFormat | None):
-        if cell_formats_equal(value, self._data.get("userEnteredFormat")):
+    def format(self, value: "gs.CellFormat | CellFormat | None"):
+        # The getter returns the wrapper, so accept it too — lets callers do
+        # `a.format = b.format` without unwrapping.
+        raw: "gs.CellFormat | None"
+        if isinstance(value, CellFormat):
+            raw = value._data
+        else:
+            raw = value
+        if cell_formats_equal(raw, self._data.get("userEnteredFormat")):
             return
-        self._set_property("userEnteredFormat", value)
+        self._set_property("userEnteredFormat", raw)
 
     def print(self, indent: str = "") -> None:
         if indent:

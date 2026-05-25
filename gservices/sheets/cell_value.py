@@ -64,6 +64,7 @@ def value_to_python(value: gs.ExtendedValue | None) -> CellValue:
         return ErrorValue(message=e.get("message", ""), type=type)
     if f is not None:
         return Formula(f)
+    return None
 
 
 def python_to_value(value: CellValue) -> gs.ExtendedValue:

@@ -133,6 +133,10 @@ def set_dotted_property(target: Mapping[str, Any], key: str, value: Any) -> None
     Sets `target[key] = value`, except when `key` is a dot-string (such as
     "format.color"), then creates a nested dictionary `target["format"]["color"] =
     value`.
+
+    Accepts `Mapping` (not `MutableMapping`) so TypedDict callers like
+    `gs.SheetProperties` typecheck — the runtime `assert` confirms it's really
+    a mutable dict.
     """
     assert isinstance(target, dict)
     if "." in key:

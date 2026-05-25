@@ -399,17 +399,15 @@ class TestColumnRemoveMove:
         assert len(cols) == 3
 
     def test_remove_makes_column_unusable(self):
-        # Mirrors Row's behavior: after remove(), the Column should not be
-        # used. Today's sentinel is `_sheet = None`, so subsequent attribute
-        # access on `_sheet` blows up — PR 5 will replace with a clear error.
+        # After remove(), any property that reads from the underlying sheet
+        # should raise a clear RuntimeError.
         data = _sheet_data(
             row_data=[_row("a", "b")],
             col_meta=[{}, {}],
         )
         col = _make_spreadsheet(data).sheets[0].columns[0]
         col.remove()
-        # Accessing _sheet-dependent properties should not silently succeed.
-        with pytest.raises((AttributeError, TypeError)):
+        with pytest.raises(RuntimeError, match="removed"):
             _ = col.width
 
     def test_move_forward(self):
@@ -678,3 +676,127 @@ class TestDeleteSheet:
         ss = _make_spreadsheet(data)
         with pytest.raises(KeyError):
             ss.delete_sheet("Nonexistent")
+
+
+# ----------------------------------------------------------------------------
+# CellFormat — border edge dedup
+# ----------------------------------------------------------------------------
+
+class TestCellFormatBorders:
+    """The four border edges (top/right/bottom/left) used to be near-duplicate
+    getter+setter quartets; they share a `_get_border` / `_set_border` helper
+    now. The four public properties must continue to behave the same."""
+
+    def _cell(self, border_data: dict[str, Any] | None = None) -> Any:
+        cell_data: dict[str, Any] = {
+            "userEnteredValue": {"stringValue": "x"},
+            "effectiveFormat": {"textFormat": {}},
+        }
+        if border_data is not None:
+            cell_data["effectiveFormat"]["borders"] = border_data
+        data = _sheet_data(row_data=[{"values": [cell_data]}])
+        return _make_spreadsheet(data).sheets[0].cell(0, 0)
+
+    def test_get_each_edge(self):
+        cell = self._cell({
+            "top": {"style": "SOLID", "width": 1},
+            "right": {"style": "DASHED", "width": 2},
+            "bottom": {"style": "DOTTED", "width": 1},
+            "left": {"style": "SOLID_THICK", "width": 3},
+        })
+        assert cell.format.border_top is not None
+        assert cell.format.border_top.style == "SOLID"
+        assert cell.format.border_right is not None
+        assert cell.format.border_right.style == "DASHED"
+        assert cell.format.border_bottom is not None
+        assert cell.format.border_bottom.style == "DOTTED"
+        assert cell.format.border_left is not None
+        assert cell.format.border_left.style == "SOLID_THICK"
+
+    def test_get_missing_edge_returns_none(self):
+        cell = self._cell()
+        assert cell.format.border_top is None
+        assert cell.format.border_right is None
+        assert cell.format.border_bottom is None
+        assert cell.format.border_left is None
+
+    def test_set_each_edge(self):
+        from gservices.sheets.border_format import BorderFormat
+        cell = self._cell()
+        cell.format.border_top = BorderFormat(style="SOLID", width=1, color="#ff0000")
+        cell.format.border_right = BorderFormat(style="DASHED", width=2)
+        cell.format.border_bottom = BorderFormat(style="DOTTED", width=1)
+        cell.format.border_left = BorderFormat(style="SOLID_THICK", width=3)
+
+        # The local data structure should reflect each set independently.
+        borders = cell.format._data.get("borders", {})
+        assert borders["top"]["style"] == "SOLID"
+        assert borders["right"]["style"] == "DASHED"
+        assert borders["bottom"]["style"] == "DOTTED"
+        assert borders["left"]["style"] == "SOLID_THICK"
+
+    def test_clear_edge_by_assigning_none(self):
+        cell = self._cell({"top": {"style": "SOLID", "width": 1}})
+        cell.format.border_top = None
+        # Assigning None collapses the border to no-style / no-width.
+        border = cell.format.border_top
+        assert border is None or (border.style is None and border.width == 0)
+
+
+# ----------------------------------------------------------------------------
+# Cell.format setter — accepts the CellFormat wrapper
+# ----------------------------------------------------------------------------
+
+class TestCellFormatAssignment:
+    """`cell.format = other_cell.format` should work: setter now accepts both
+    the raw `gs.CellFormat` dict and the `CellFormat` wrapper."""
+
+    def test_assign_wrapper(self):
+        # Source cell has bold red text; target has default. After assignment,
+        # the target's userEnteredFormat should contain the same fields.
+        data = _sheet_data(row_data=[
+            {"values": [
+                {
+                    "userEnteredValue": {"stringValue": "src"},
+                    "effectiveFormat": {
+                        "textFormat": {"bold": True, "fontSize": 14},
+                    },
+                },
+                {"userEnteredValue": {"stringValue": "dst"}},
+            ]},
+        ])
+        sheet = _make_spreadsheet(data).sheets[0]
+        src = sheet.cell(0, 0)
+        dst = sheet.cell(0, 1)
+        dst.format = src.format
+        # Now the destination's userEnteredFormat matches the source's data.
+        assert dst._data.get("userEnteredFormat") is not None
+
+
+# ----------------------------------------------------------------------------
+# Row.remove() sentinel
+# ----------------------------------------------------------------------------
+
+class TestRowRemoveSentinel:
+    """After `Row.remove()`, attribute access should raise a clear
+    RuntimeError, mirroring `Column.remove()`."""
+
+    def test_removed_row_raises(self):
+        data = _sheet_data(
+            row_data=[_row("a"), _row("b")],
+            row_meta=[{}, {}],
+        )
+        row = _make_spreadsheet(data).sheets[0].rows[0]
+        row.remove()
+        with pytest.raises(RuntimeError, match="removed"):
+            _ = row.height
+
+    def test_removed_column_raises_on_metadata_access(self):
+        data = _sheet_data(
+            row_data=[_row("a", "b")],
+            col_meta=[{}, {}],
+        )
+        col = _make_spreadsheet(data).sheets[0].columns[0]
+        col.remove()
+        with pytest.raises(RuntimeError, match="removed"):
+            _ = col.metadata

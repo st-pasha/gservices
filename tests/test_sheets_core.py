@@ -1165,3 +1165,119 @@ class TestExclusiveEdit:
             for r in adds
         )
         assert protected_sheet_ids == [0, 1]
+
+
+# ----------------------------------------------------------------------------
+# Spreadsheet.reload — refresh loaded sheet data from server
+# ----------------------------------------------------------------------------
+
+class TestReload:
+    """`reload()` invalidates and re-fetches cell data for sheets that
+    had data loaded. Sheets that were never loaded stay untouched."""
+
+    def _ss_with_two_sheets_and_reload_mock(
+        self,
+        initial_value: str,
+        refreshed_value: str,
+    ) -> tuple[Spreadsheet, MagicMock]:
+        """Build a Spreadsheet whose sheets[0] is pre-loaded with
+        `initial_value` at A1, and whose `spreadsheets.get(...).execute()`
+        returns `refreshed_value` at A1 on the next call."""
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [
+                {
+                    "properties": {"sheetId": 0, "title": "S0", "index": 0},
+                    "data": [{
+                        "rowData": [{
+                            "values": [{
+                                "userEnteredValue": {"stringValue": initial_value},
+                            }],
+                        }],
+                        "rowMetadata": [{}],
+                        "columnMetadata": [{}],
+                    }],
+                },
+                # Second sheet: not loaded (data: []).
+                {
+                    "properties": {"sheetId": 1, "title": "S1", "index": 1},
+                    "data": [],
+                },
+            ],
+        }
+        service = MagicMock()
+        sheets_get_execute = (
+            service.resource.spreadsheets.return_value.get
+            .return_value.execute
+        )
+        # Refresh response: contains both sheets in the response, but only
+        # the loaded one (sheetId=0) gets updated by _load_all_data.
+        sheets_get_execute.return_value = {
+            "sheets": [
+                {
+                    "properties": {"sheetId": 0},
+                    "data": [{
+                        "rowData": [{
+                            "values": [{
+                                "userEnteredValue": {
+                                    "stringValue": refreshed_value
+                                },
+                            }],
+                        }],
+                        "rowMetadata": [{}],
+                        "columnMetadata": [{}],
+                    }],
+                },
+            ],
+        }
+        ss = Spreadsheet(cast("gs.Spreadsheet", data), service)
+        return ss, service
+
+    def test_reload_refreshes_loaded_sheet(self):
+        ss, _ = self._ss_with_two_sheets_and_reload_mock(
+            initial_value="before", refreshed_value="after",
+        )
+        # Pre-reload: original value visible.
+        assert ss.sheets[0].cell(0, 0).user_entered_value == "before"
+        ss.reload()
+        # Post-reload: refreshed value visible. Note: must re-fetch the cell
+        # via sheet.cell() — old Cell references are stale.
+        assert ss.sheets[0].cell(0, 0).user_entered_value == "after"
+
+    def test_reload_does_not_eager_load_unloaded_sheets(self):
+        ss, _ = self._ss_with_two_sheets_and_reload_mock(
+            initial_value="x", refreshed_value="x",
+        )
+        # sheets[1] starts unloaded.
+        assert ss.sheets[1]._cell_data is None
+        ss.reload()
+        # Still unloaded after reload — reload should NOT eager-fetch.
+        assert ss.sheets[1]._cell_data is None
+
+    def test_reload_with_no_loaded_sheets_short_circuits(self):
+        # If nothing was loaded, reload() is a no-op (no API call).
+        data: dict[str, Any] = {
+            "spreadsheetId": "TEST",
+            "properties": {"title": "T", "locale": "en_US", "timeZone": "UTC"},
+            "sheets": [
+                {"properties": {"sheetId": 0, "title": "S0", "index": 0}, "data": []},
+            ],
+        }
+        service = MagicMock()
+        ss = Spreadsheet(cast("gs.Spreadsheet", data), service)
+        ss.reload()
+        # spreadsheets.get was never called.
+        assert service.resource.spreadsheets.return_value.get.call_count == 0
+
+    def test_reload_clears_cell_cache(self):
+        ss, _ = self._ss_with_two_sheets_and_reload_mock(
+            initial_value="before", refreshed_value="after",
+        )
+        old_cell = ss.sheets[0].cell(0, 0)
+        ss.reload()
+        new_cell = ss.sheets[0].cell(0, 0)
+        # Different Cell object (cache was cleared).
+        assert new_cell is not old_cell
+        # New cell sees fresh data; old cell points at the orphaned dict.
+        assert new_cell.user_entered_value == "after"

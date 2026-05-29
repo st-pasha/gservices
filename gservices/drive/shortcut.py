@@ -25,6 +25,10 @@ class Shortcut(File):
 
     @property
     def target(self) -> File:
+        # The result is cached on the Shortcut instance. If the target later
+        # gets created or the shortcut is later re-bound, this stale
+        # MissingFile will keep being returned — re-create the Shortcut (or
+        # call DriveService.uncache + re-fetch by id) to force a re-resolve.
         if self._target is None:
             details = self._data.get("shortcutDetails", {})
             target_id = details["targetId"]

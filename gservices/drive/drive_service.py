@@ -20,7 +20,10 @@ class DriveService:
     def __init__(self, resource: g.DriveResource):
         self._resource = resource
         self._ids: dict[str, File] = {}
-        self._paths: dict[Path, File] = {}
+        # A path may correspond to multiple files: Drive permits duplicate
+        # names within a folder. Lookups on an ambiguous path raise; callers
+        # must use `id=` to disambiguate.
+        self._paths: dict[Path, list[File]] = {}
         root = Root(self)
         self.cache(root)
         self._current_dir: Path = root.path
@@ -54,7 +57,9 @@ class DriveService:
         self.mkfile(path, "folder")
 
     def mkfile(
-        self, path: str | Path, kind: Literal["document", "spreadsheet", "folder"]
+        self,
+        path: str | Path,
+        kind: Literal["document", "spreadsheet", "folder", "slides", "drawing"],
     ) -> None:
         path = self._resolve_path(path)
         parent = self.get(path.parent)
@@ -94,7 +99,7 @@ class DriveService:
         if source.has_tail:
             if dest.has_tail:
                 for file in cast(Folder, source_file).list():
-                    file.copy_to(dest)
+                    file.copy_to(dest / file.name)
             else:
                 raise ValueError(
                     "Operation not allowed: the target path must have a trailing /"
@@ -142,7 +147,14 @@ class DriveService:
                 cast(Folder, parent).list()
                 if path not in self._paths:
                     raise FileNotFoundError(f"File `{path}` does not exist")
-            return self._paths[path]
+            bucket = self._paths[path]
+            if len(bucket) > 1:
+                ids = ", ".join(repr(f.id) for f in bucket)
+                raise ValueError(
+                    f"Path `{path}` is ambiguous: matches {len(bucket)} files "
+                    f"(ids: {ids}). Look one up with get(id=...)."
+                )
+            return bucket[0]
         else:
             raise TypeError("Missing either `path` or `id`")
 
@@ -155,13 +167,22 @@ class DriveService:
 
     def find(self, path: str | Path, mime_type: str | None = None) -> list[File]:
         """
-        Returns a list of file that match the pattern [path], optionally
-        restricted to only those that have the requested [mime_type].
+        Returns a list of files matching the pattern [path], optionally
+        restricted to those with the requested [mime_type].
 
-        The [path] is interpreted as follows: if any segment of the path matches
-        an existing file/folder exactly, then that file/folder is used.
-        Otherwise, the segment is interpreted as a regex pattern (however,
-        special "patterns" `*` and `**` are also supported).
+        Each path segment is matched against the children of the previous
+        segment's result(s):
+
+        1. If a child's name matches the segment **exactly**, that child is
+           taken (regardless of any regex metacharacters the segment contains).
+        2. Otherwise the segment is compiled as a regex and the children whose
+           names fully match it are taken. The match is anchored at both ends
+           (`re.fullmatch`), so `foo` does not match `foobar`.
+        3. The special segments `*` and `**` match any single child and any
+           descendant respectively.
+
+        If neither exact match nor regex matches anything for some segment,
+        the search prunes that branch and continues with the others.
         """
         path = self._resolve_path(path)
         files = self._find_paths(path)
@@ -204,15 +225,34 @@ class DriveService:
 
     def cache(self, file: File) -> None:
         self._ids[file.id] = file
-        self._paths[file.path] = file
+        bucket = self._paths.setdefault(file.path, [])
+        # Compare by id, not identity — a re-fetch may have produced a new
+        # File instance for an already-cached id.
+        if not any(f.id == file.id for f in bucket):
+            bucket.append(file)
 
     def uncache(self, file: File) -> None:
-        del self._ids[file.id]
-        del self._paths[file.path]
+        self._ids.pop(file.id, None)
+        self._uncache_path(file)
+
+    def _uncache_path(self, file: File) -> None:
+        """Internal: drop the file's `_paths` entry, leaving `_ids` intact.
+
+        Used when a file's path becomes stale (parent moved/renamed) but the
+        file itself still exists and is reachable by id.
+        """
+        bucket = self._paths.get(file.path)
+        if bucket is None:
+            return
+        remaining = [f for f in bucket if f.id != file.id]
+        if remaining:
+            self._paths[file.path] = remaining
+        else:
+            del self._paths[file.path]
 
     def _find_paths(self, path: Path) -> list[File]:
         if path in self._paths:
-            return [self._paths[path]]
+            return list(self._paths[path])
         else:
             parents = self._find_paths(path.parent)
             out: list[File] = []
@@ -224,18 +264,23 @@ class DriveService:
 
     def _find_files_in_folder(self, folder: Folder, pattern: str) -> list[File]:
         if pattern == "*":
-            return folder.list()
-        elif pattern == "**":
+            return list(folder.list())
+        if pattern == "**":
             out: list[File] = []
             self._find_all_files_recursively(folder, out)
             return out
-        else:
+        children = folder.list()
+        # 1. Exact name match wins over regex — so literal names like
+        # "Report (Q1).csv" don't get mis-interpreted as regex.
+        exact = [f for f in children if f.name == pattern]
+        if exact:
+            return exact
+        # 2. Fall back to regex, anchored at both ends.
+        try:
             regex = re.compile(pattern)
-            out: list[File] = []
-            for file in folder.list():
-                if re.match(regex, file.name):
-                    out.append(file)
-            return out
+        except re.error:
+            return []
+        return [f for f in children if regex.fullmatch(f.name)]
 
     def _find_all_files_recursively(self, folder: Folder, out: list[File]):
         for file in folder.list():

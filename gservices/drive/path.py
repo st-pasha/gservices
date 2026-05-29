@@ -22,8 +22,8 @@ class Path:
         assert len(parts) > 0
         has_tail = False
         if parts[0] == "~":
-            parts = [*drive.user_drive.path._parts, *parts]
-        if parts[0] != "":
+            parts = [*drive.user_drive.path._parts, *parts[1:]]
+        elif parts[0] != "":
             parts = [*drive.pwd()._parts, *parts]
         if parts[-1] == "":
             parts.pop()
@@ -50,6 +50,11 @@ class Path:
 
     @property
     def parent(self) -> Path:
+        # The root path has no parent — falling off the top is an error,
+        # not a silently-empty Path (which would violate the constructor's
+        # invariant that parts[0] ∈ {"", "?"}).
+        if self.is_root:
+            raise ValueError("Root path has no parent")
         return Path(self._parts[:-1])
 
     @property
@@ -75,11 +80,10 @@ class Path:
         return f"Path({self})"
 
     def __eq__(self, other: object) -> bool:
-        return (
-            isinstance(other, Path)
-            and self._parts == other._parts
-            and self._has_tail == other._has_tail
-        )
+        # `has_tail` is a syntactic hint for `cp`/`mv` (callers check it
+        # directly), not part of path identity — equality must agree with
+        # `__hash__`, which already only considers `_parts`.
+        return isinstance(other, Path) and self._parts == other._parts
 
     def __hash__(self) -> int:
         return hash(self._parts)

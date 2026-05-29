@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 
 from gservices.drive.folder import Folder
 
@@ -18,5 +18,8 @@ class SharedDrive(Folder):
             return f"\033[36;1m{self.name}\033[m/"
         return self.name
 
-    def remove(self, trash: bool = True) -> None:
-        raise NotImplementedError("A shared drive cannot be removed")
+    @override
+    def delete(self, trash: bool = True) -> None:
+        raise NotImplementedError(
+            "A shared drive cannot be deleted via this library. Use the Drive UI."
+        )

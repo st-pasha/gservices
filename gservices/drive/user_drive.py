@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from gservices.drive.folder import Folder
 
@@ -18,5 +18,6 @@ class UserDrive(Folder):
             return f"\033[32;1m{self.name}\033[m/"
         return self.name
 
-    def remove(self, trash: bool = True) -> None:
-        raise NotImplementedError("A user drive cannot be removed")
+    @override
+    def delete(self, trash: bool = True) -> None:
+        raise NotImplementedError("The user drive cannot be deleted")

@@ -20,7 +20,7 @@ class Root(Folder):
 
     @override
     def delete(self, trash: bool = True) -> None:
-        raise NotImplementedError("The Root cannot be deleted")
+        raise RuntimeError("The Root cannot be deleted")
 
     @property
     def user_drive(self) -> UserDrive:

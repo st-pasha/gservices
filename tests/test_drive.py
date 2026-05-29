@@ -408,13 +408,13 @@ class TestDeleteGuards:
     def test_root_delete_raises(self):
         drive, _ = _make_drive()
         root = drive.get("/")
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RuntimeError):
             root.delete()
 
     def test_user_drive_delete_raises(self):
         drive, _ = _make_drive()
         ud = drive.user_drive
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RuntimeError):
             ud.delete()
 
     def test_shared_drive_delete_raises(self):
@@ -429,7 +429,7 @@ class TestDeleteGuards:
             ],
         )
         sd = drive.get("/MyTeam")
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(RuntimeError):
             sd.delete()
 
 

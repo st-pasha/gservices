@@ -20,4 +20,4 @@ class UserDrive(Folder):
 
     @override
     def delete(self, trash: bool = True) -> None:
-        raise NotImplementedError("The user drive cannot be deleted")
+        raise RuntimeError("The user drive cannot be deleted")

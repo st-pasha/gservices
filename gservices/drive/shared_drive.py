@@ -20,6 +20,6 @@ class SharedDrive(Folder):
 
     @override
     def delete(self, trash: bool = True) -> None:
-        raise NotImplementedError(
+        raise RuntimeError(
             "A shared drive cannot be deleted via this library. Use the Drive UI."
         )

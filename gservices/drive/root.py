@@ -18,6 +18,10 @@ class Root(Folder):
     def parent(self) -> Folder:
         raise ValueError("Root folder doesn't have a parent")
 
+    @override
+    def delete(self, trash: bool = True) -> None:
+        raise RuntimeError("The Root cannot be deleted")
+
     @property
     def user_drive(self) -> UserDrive:
         ud = self.list()[0]
@@ -34,11 +38,20 @@ class Root(Folder):
         out.append(user_drive)
 
         # Shared drives
-        res = self._drive.resource.drives().list().execute()
-        for item in res.get("drives", []):
-            shared_drive = SharedDrive(item, self._drive)
-            self._drive.cache(shared_drive)
-            out.append(shared_drive)
+        page_token = ""
+        while True:
+            res = (
+                self._drive.resource.drives()
+                .list(pageToken=page_token, pageSize=100)
+                .execute()
+            )
+            for item in res.get("drives", []):
+                shared_drive = SharedDrive(item, self._drive)
+                self._drive.cache(shared_drive)
+                out.append(shared_drive)
+            page_token = res.get("nextPageToken", "")
+            if not page_token:
+                break
 
         return out
 

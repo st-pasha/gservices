@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 class File:
-    FIELDS = "id,name,mimeType,parents,shortcutDetails,contentRestrictions"
+    FIELDS = "id,name,mimeType,parents,driveId,shortcutDetails,contentRestrictions"
 
     def __init__(self, data: g.File, drive: DriveService):
         self._data = data
@@ -18,6 +18,11 @@ class File:
         self._path: Path | None = None
         self._parent: Folder | None = None
         self._shared_drive_id: str | None = None
+        # True once a `fields=*` fetch has populated the extended properties
+        # (size, createdTime, modifiedTime, ...). Folders / Workspace docs do
+        # not return a "size" field even after a full fetch, so we can't use
+        # the presence of "size" as a load sentinel.
+        self._loaded: bool = False
 
     @staticmethod
     def resolve_from_mime(data: g.File, service: DriveService) -> File:
@@ -101,7 +106,13 @@ class File:
         file is not on a shared drive.
         """
         if self._shared_drive_id is None:
-            self._shared_drive_id = self.parent.shared_drive_id
+            # Prefer the server-supplied `driveId` (single field) over walking
+            # up to the nearest SharedDrive ancestor, which would N-round-trip
+            # for a deep file fetched by id with cold ancestors.
+            if "driveId" in self._data:
+                self._shared_drive_id = self._data["driveId"]
+            else:
+                self._shared_drive_id = self.parent.shared_drive_id
         return self._shared_drive_id
 
     # ----------------------------------------------------------------------------------
@@ -167,13 +178,14 @@ class File:
         return int(self._data.get("version", 0))
 
     def _ensure_all_properties_loaded(self):
-        if "size" not in self._data:
+        if not self._loaded:
             new_data = (
                 self._drive.resource.files()
                 .get(fileId=self.id, fields="*", supportsAllDrives=True)
                 .execute()
             )
             self._data = new_data
+            self._loaded = True
 
     # ----------------------------------------------------------------------------------
     # Public methods
@@ -191,8 +203,11 @@ class File:
             .execute()
         )
         self._drive.uncache(self)
+        self._path = None
         self._data = res
         self._drive.cache(self)
+        if isinstance(self, Folder):
+            self._invalidate_descendant_paths()
 
     def move_to(self, dest: Path) -> None:
         current_parent = self.parent
@@ -221,6 +236,8 @@ class File:
         self._shared_drive_id = None
         self._data = res
         self._drive.cache(self)
+        if isinstance(self, Folder):
+            self._invalidate_descendant_paths()
 
     def copy_to(self, dest: Path) -> None:
         dest_dir = self._drive.get(dest.parent)
@@ -228,6 +245,16 @@ class File:
             raise NotADirectoryError(
                 f"Destination path `{dest_dir.path}` is not a directory"
             )
+        if isinstance(self, Folder):
+            # Drive's `files.copy` refuses folders (returns "The resource
+            # body includes fields which are not directly writable" or
+            # creates an empty folder, depending on permissions). Emulate a
+            # recursive copy: create the destination folder, then copy each
+            # child into it.
+            new_folder = dest_dir.make_file(dest.basename, "folder")
+            for child in self.list():
+                child.copy_to(new_folder.path / child.name)
+            return
         res = (
             self._drive.resource.files()
             .copy(
@@ -259,6 +286,8 @@ class File:
             self._drive.resource.files().delete(
                 fileId=self.id, supportsAllDrives=True
             ).execute()  # type: ignore
+        if isinstance(self, Folder):
+            self._uncache_descendants_for_delete()
         self._drive.uncache(self)
         self.parent.handle_file_removed(self)
 

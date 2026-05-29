@@ -8,6 +8,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from googleapiclient.errors import HttpError
 
 from gservices.drive.drive_service import DriveService
 from gservices.drive.folder import Folder
@@ -15,14 +16,25 @@ from gservices.drive.path import Path
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 DOC_MIME = "application/vnd.google-apps.document"
+SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 
 USER_DRIVE = {"id": "USERDRIVE", "name": "My Drive", "mimeType": FOLDER_MIME}
+
+
+def _http_error(status: int) -> HttpError:
+    """Build an HttpError that mimics the googleapiclient one with the given
+    HTTP status — the only field the Drive code inspects."""
+    resp = MagicMock()
+    resp.status = status
+    return HttpError(resp, b"{}")
 
 
 def _make_drive(
     files_list_pages: list[dict[str, Any]] | None = None,
     files_get_by_id: dict[str, dict[str, Any]] | None = None,
     drives_list_pages: list[dict[str, Any]] | None = None,
+    files_get_404: set[str] | None = None,
 ) -> tuple[DriveService, MagicMock]:
     """
     Build a `DriveService` backed by a `MagicMock` resource.
@@ -41,10 +53,13 @@ def _make_drive(
     # the side_effect routes by call args so a single mock handles both that
     # bootstrap call and subsequent `_fetch_file_by_id` lookups.
     files_get_by_id = dict(files_get_by_id or {})
+    files_get_404 = set(files_get_404 or set())
 
     def _files_get(*, fileId: str, **_kwargs: Any) -> MagicMock:
         execute = MagicMock()
-        if fileId == "root":
+        if fileId in files_get_404:
+            execute.execute.side_effect = _http_error(404)
+        elif fileId == "root":
             execute.execute.return_value = USER_DRIVE
         elif fileId in files_get_by_id:
             execute.execute.return_value = files_get_by_id[fileId]
@@ -770,3 +785,992 @@ class TestRecursiveFolderCopy:
                        resource.files.return_value.copy.call_args_list]
         assert {"name": "x.txt", "parents": ["B"]} in copy_bodies
         assert {"name": "y.txt", "parents": ["B"]} in copy_bodies
+
+
+# ----------------------------------------------------------------------------
+# Coverage: `mv` — the shell-like move API had no tests at all
+# ----------------------------------------------------------------------------
+
+
+class TestMv:
+    def _two_folders(self) -> tuple[DriveService, MagicMock]:
+        # User drive has folders A and B; A holds a single file x.txt.
+        return _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "B", "name": "B", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+                {"files": [
+                    {"id": "X", "name": "x.txt", "mimeType": DOC_MIME,
+                     "parents": ["A"]},
+                ]},
+            ],
+        )
+
+    def test_mv_tail_to_tail_moves_each_child_into_dest(self):
+        drive, resource = self._two_folders()
+        update_execute = resource.files.return_value.update.return_value.execute
+        update_execute.return_value = {
+            "id": "X", "name": "x.txt", "mimeType": DOC_MIME, "parents": ["B"],
+        }
+        drive.mv("~/A/", "~/B/")
+        kwargs = resource.files.return_value.update.call_args.kwargs
+        assert kwargs["addParents"] == "B"
+        assert kwargs["removeParents"] == "A"
+
+    def test_mv_file_to_tail_moves_into_folder(self):
+        drive, resource = self._two_folders()
+        # Force A to be listed too, then move x.txt into B.
+        list(drive.ls("~/A"))
+        update_execute = resource.files.return_value.update.return_value.execute
+        update_execute.return_value = {
+            "id": "X", "name": "x.txt", "mimeType": DOC_MIME, "parents": ["B"],
+        }
+        drive.mv("~/A/x.txt", "~/B/")
+        kwargs = resource.files.return_value.update.call_args.kwargs
+        assert kwargs["addParents"] == "B" and kwargs["removeParents"] == "A"
+
+    def test_mv_file_to_non_tail_moves_then_renames(self):
+        drive, resource = self._two_folders()
+        list(drive.ls("~/A"))
+        # `mv("~/A/x.txt", "~/B/y.txt")` should both move into B and rename.
+        update_execute = resource.files.return_value.update.return_value.execute
+        update_execute.side_effect = [
+            {"id": "X", "name": "x.txt", "mimeType": DOC_MIME, "parents": ["B"]},
+            {"id": "X", "name": "y.txt", "mimeType": DOC_MIME, "parents": ["B"]},
+        ]
+        drive.mv("~/A/x.txt", "~/B/y.txt")
+        all_kwargs = [c.kwargs for c in
+                      resource.files.return_value.update.call_args_list]
+        # First call moved between folders, second call set the new name.
+        assert all_kwargs[0]["addParents"] == "B"
+        assert all_kwargs[1]["body"] == {"name": "y.txt"}
+
+    def test_mv_source_tail_to_non_tail_raises(self):
+        drive, _ = self._two_folders()
+        # Forcing existence checks first.
+        list(drive.ls("~"))
+        with pytest.raises(ValueError, match="must have a trailing /"):
+            drive.mv("~/A/", "~/B")
+
+    def test_mv_non_directory_source_with_tail_raises(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(NotADirectoryError):
+            drive.mv("~/f.txt/", "~/whatever/")
+
+    def test_mv_non_directory_dest_with_tail_raises(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "S", "name": "src", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(NotADirectoryError):
+            drive.mv("~/src/", "~/f.txt/")
+
+
+# ----------------------------------------------------------------------------
+# Coverage: `cp` error paths and `mkfile` error paths
+# ----------------------------------------------------------------------------
+
+
+class TestCpErrorPaths:
+    def test_cp_source_tail_to_non_tail_raises(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "B", "name": "B", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(ValueError, match="must have a trailing /"):
+            drive.cp("~/A/", "~/B")
+
+    def test_cp_non_directory_source_tail_raises(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(NotADirectoryError):
+            drive.cp("~/f.txt/", "~/dest/")
+
+    def test_cp_non_directory_dest_tail_raises(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "S", "name": "src", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(NotADirectoryError):
+            drive.cp("~/src/", "~/f.txt/")
+
+
+class TestMkfileErrors:
+    def test_mkfile_at_root_raises(self):
+        drive, _ = _make_drive()
+        with pytest.raises(ValueError, match="within the Root"):
+            drive.mkdir("/NewDrive")
+
+    def test_mkfile_non_directory_parent_raises(self):
+        # Parent path is a file, not a folder.
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(NotADirectoryError):
+            drive.mkfile("~/f.txt/child", "document")
+
+    def test_mkdir_creates_a_folder(self):
+        drive, resource = _make_drive()
+        create_execute = resource.files.return_value.create.return_value.execute
+        create_execute.return_value = {
+            "id": "NEW", "name": "newdir", "mimeType": FOLDER_MIME,
+            "parents": ["USERDRIVE"],
+        }
+        drive.mkdir("~/newdir")
+        body = resource.files.return_value.create.call_args.kwargs["body"]
+        assert body["mimeType"] == FOLDER_MIME
+        assert body["name"] == "newdir"
+
+
+# ----------------------------------------------------------------------------
+# Coverage: shell-like helpers (cd/pwd, ls errors, rm, exists, get(no args))
+# ----------------------------------------------------------------------------
+
+
+class TestShellApi:
+    def test_cd_then_pwd(self):
+        drive, _ = _make_drive()
+        drive.cd("~")
+        assert str(drive.pwd()) == "/My Drive"
+
+    def test_pwd_starts_at_root(self):
+        drive, _ = _make_drive()
+        assert str(drive.pwd()) == "/"
+
+    def test_ls_on_a_file_raises(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(NotADirectoryError):
+            drive.ls("~/f.txt")
+
+    def test_rm_trashes_file(self):
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        update_execute = resource.files.return_value.update.return_value.execute
+        update_execute.return_value = {}
+        drive.rm("~/f.txt")
+        body = resource.files.return_value.update.call_args.kwargs["body"]
+        assert body == {"trashed": True}
+
+    def test_exists_true_for_present_file(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        assert drive.exists("~/f.txt")
+
+    def test_exists_false_for_missing_file(self):
+        drive, _ = _make_drive(files_list_pages=[{"files": []}])
+        assert not drive.exists("~/nope.txt")
+
+    def test_get_no_args_raises_type_error(self):
+        drive, _ = _make_drive()
+        with pytest.raises(TypeError, match="Missing either"):
+            drive.get()
+
+
+# ----------------------------------------------------------------------------
+# Coverage: Shortcut — resolution, brokenness, display
+# ----------------------------------------------------------------------------
+
+
+class TestShortcut:
+    def _drive_with_shortcut(
+        self, *, broken: bool = False, target_name: str = "target.txt",
+        shortcut_name: str = "alias",
+    ) -> tuple[DriveService, MagicMock]:
+        files = [
+            {"id": "S", "name": shortcut_name, "mimeType": SHORTCUT_MIME,
+             "parents": ["USERDRIVE"],
+             "shortcutDetails": {
+                 "targetId": "MISSING" if broken else "T",
+                 "targetMimeType": DOC_MIME,
+             }},
+        ]
+        if not broken:
+            files.insert(0, {
+                "id": "T", "name": target_name, "mimeType": DOC_MIME,
+                "parents": ["USERDRIVE"],
+            })
+        return _make_drive(
+            files_list_pages=[{"files": files}],
+            files_get_404={"MISSING"} if broken else None,
+        )
+
+    def test_resolves_target_to_real_file(self):
+        from gservices.drive.shortcut import Shortcut
+
+        drive, _ = self._drive_with_shortcut()
+        list(drive.ls("~"))
+        shortcut = drive.get(id="S")
+        assert isinstance(shortcut, Shortcut)
+        assert shortcut.target.id == "T"
+        assert shortcut.is_broken is False
+
+    def test_broken_shortcut_returns_missing_file(self):
+        from gservices.drive.shortcut import MissingFile, Shortcut
+
+        drive, _ = self._drive_with_shortcut(broken=True)
+        list(drive.ls("~"))
+        shortcut = drive.get(id="S")
+        assert isinstance(shortcut, Shortcut)
+        target = shortcut.target
+        assert isinstance(target, MissingFile)
+        assert target.id == "MISSING"
+        # MissingFile uses a `?`-rooted sentinel path so it can't collide
+        # with any real file (parts[0] == "?" instead of "").
+        assert target.path._parts == ("?",)  # type: ignore[attr-defined]
+        assert shortcut.is_broken is True
+
+    def test_target_is_memoized(self):
+        from gservices.drive.shortcut import Shortcut
+
+        drive, _ = self._drive_with_shortcut()
+        list(drive.ls("~"))
+        shortcut = drive.get(id="S")
+        assert isinstance(shortcut, Shortcut)
+        first = shortcut.target
+        second = shortcut.target
+        # No new files().get call beyond the listing already issued.
+        assert first is second
+
+    def test_file_list_repr_without_colors(self):
+        drive, _ = self._drive_with_shortcut()
+        list(drive.ls("~"))
+        shortcut = drive.get(id="S")
+        rep = shortcut.file_list_repr(use_colors=False)
+        assert "alias" in rep
+        assert "↪" in rep  # the curved-arrow icon for live shortcut
+
+    def test_broken_file_list_repr_uses_x_icon(self):
+        drive, _ = self._drive_with_shortcut(broken=True)
+        list(drive.ls("~"))
+        shortcut = drive.get(id="S")
+        rep = shortcut.file_list_repr(use_colors=False)
+        assert "✘" in rep  # ✘ for broken
+
+    def test_file_list_repr_with_colors_substitutes_shortcut_name(self):
+        # Shortcut name differs from target name — the colored repr should
+        # show the shortcut's name, not the target's.
+        drive, _ = self._drive_with_shortcut(
+            shortcut_name="my-alias", target_name="real.txt",
+        )
+        list(drive.ls("~"))
+        shortcut = drive.get(id="S")
+        rep = shortcut.file_list_repr(use_colors=True)
+        assert "my-alias" in rep
+        assert "real.txt" not in rep
+
+
+# ----------------------------------------------------------------------------
+# Coverage: File extended properties — single fetch populates everything
+# ----------------------------------------------------------------------------
+
+
+class TestExtendedProperties:
+    def _drive_with_fully_loaded_file(self) -> tuple[DriveService, MagicMock, Any]:
+        # The `*` fetch returns every extended field at once.
+        full = {
+            "id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+            "parents": ["USERDRIVE"],
+            "size": "4096",
+            "createdTime": "2024-01-02T03:04:05Z",
+            "modifiedTime": "2024-03-04T05:06:07Z",
+            "starred": True,
+            "trashed": False,
+            "explicitlyTrashed": False,
+            "version": "42",
+        }
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+            files_get_by_id={"F": full},
+        )
+        f = drive.get("~/f.txt")
+        return drive, resource, f
+
+    def test_size(self):
+        import datetime as dt
+
+        _, _, f = self._drive_with_fully_loaded_file()
+        assert f.size == 4096
+        assert f.created_time == dt.datetime.fromisoformat("2024-01-02T03:04:05+00:00")
+        assert f.modified_time == dt.datetime.fromisoformat("2024-03-04T05:06:07+00:00")
+        assert f.starred is True
+        assert f.trashed is False
+        assert f.explicitly_trashed is False
+        assert f.version == 42
+
+
+# ----------------------------------------------------------------------------
+# Coverage: File.parent when "parents" is missing → returns Root
+# ----------------------------------------------------------------------------
+
+
+class TestFileLazyParent:
+    def test_file_without_parents_field_has_root_parent(self):
+        from gservices.drive.root import Root
+
+        drive, _ = _make_drive(
+            files_get_by_id={
+                "F": {"id": "F", "name": "orphan", "mimeType": DOC_MIME},
+            },
+        )
+        f = drive.get(id="F")
+        assert isinstance(f.parent, Root)
+
+
+# ----------------------------------------------------------------------------
+# Coverage: _fetch_file_by_id surfaces 404 as FileNotFoundError
+# ----------------------------------------------------------------------------
+
+
+class TestFetchByIdNotFound:
+    def test_404_becomes_file_not_found(self):
+        drive, _ = _make_drive(files_get_404={"NOPE"})
+        with pytest.raises(FileNotFoundError, match="NOPE"):
+            drive.get(id="NOPE")
+
+
+# ----------------------------------------------------------------------------
+# Coverage: find() — `**` and mime_type filter
+# ----------------------------------------------------------------------------
+
+
+class TestFindRecursive:
+    def test_double_star_returns_all_descendants(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                # User drive: contains folder A and file q.txt.
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "Q", "name": "q.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+                # Inside A: B (folder) and x.txt.
+                {"files": [
+                    {"id": "B", "name": "B", "mimeType": FOLDER_MIME,
+                     "parents": ["A"]},
+                    {"id": "X", "name": "x.txt", "mimeType": DOC_MIME,
+                     "parents": ["A"]},
+                ]},
+                # Inside B: y.txt.
+                {"files": [
+                    {"id": "Y", "name": "y.txt", "mimeType": DOC_MIME,
+                     "parents": ["B"]},
+                ]},
+            ],
+        )
+        ids = sorted(f.id for f in drive.find("~/**"))
+        assert ids == ["A", "B", "Q", "X", "Y"]
+
+    def test_find_filters_by_mime_type(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "S", "name": "a", "mimeType": SHEET_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "D", "name": "a", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        result = drive.find("~/a", mime_type=SHEET_MIME)
+        assert [f.id for f in result] == ["S"]
+
+
+# ----------------------------------------------------------------------------
+# Coverage: Path.from_string — `.`, `..`, normalization, repr
+# ----------------------------------------------------------------------------
+
+
+class TestPathParsing:
+    def test_dot_resolves_to_pwd(self):
+        drive, _ = _make_drive()
+        drive.cd("~")
+        assert Path.from_string(".", drive) == drive.pwd()
+
+    def test_empty_resolves_to_pwd(self):
+        drive, _ = _make_drive()
+        assert Path.from_string("", drive) == drive.pwd()
+
+    def test_relative_path_is_prepended_with_pwd(self):
+        drive, _ = _make_drive()
+        drive.cd("~")
+        p = Path.from_string("sub", drive)
+        assert str(p) == "/My Drive/sub"
+
+    def test_dotdot_climbs_one_level(self):
+        drive, _ = _make_drive()
+        p = Path.from_string("/A/B/..", drive)
+        assert str(p) == "/A"
+
+    def test_single_dot_in_path_is_dropped(self):
+        drive, _ = _make_drive()
+        p = Path.from_string("/A/./B", drive)
+        assert str(p) == "/A/B"
+
+    def test_dotdot_past_root_raises(self):
+        drive, _ = _make_drive()
+        with pytest.raises(ValueError, match="beyond the Root"):
+            Path.from_string("/..", drive)
+
+    def test_repr_includes_path(self):
+        assert repr(Path(("", "A", "B"))) == "Path(/A/B)"
+
+    def test_eq_against_non_path_is_false(self):
+        assert (Path(("",)) == "/") is False
+
+
+# ----------------------------------------------------------------------------
+# Coverage: file_list_repr on each concrete type + FileList.__repr__
+# ----------------------------------------------------------------------------
+
+
+class TestDisplayRepr:
+    def test_file_base_repr_returns_name(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType":
+                        "application/octet-stream",
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        f = drive.get("~/f.txt")
+        assert f.file_list_repr() == "f.txt"
+        assert str(f) == "/My Drive/f.txt"
+        assert "/My Drive/f.txt" in repr(f)
+
+    def test_folder_with_colors_wraps_with_ansi(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "D", "name": "D", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        folder = drive.get("~/D")
+        with_colors = folder.file_list_repr(use_colors=True)
+        plain = folder.file_list_repr(use_colors=False)
+        assert "\033[" in with_colors and "D" in with_colors
+        assert plain == "D"
+
+    def test_shared_drive_and_user_drive_repr(self):
+        drive, _ = _make_drive(
+            drives_list_pages=[
+                {"drives": [
+                    {"id": "SD", "name": "Team", "mimeType": FOLDER_MIME},
+                ]},
+            ],
+        )
+        list(drive.ls("/"))
+        sd = drive.get("/Team")
+        ud = drive.user_drive
+        # Smoke: each has its own color sequence; without colors strips it.
+        assert sd.file_list_repr(use_colors=True) != sd.name
+        assert sd.file_list_repr(use_colors=False) == "Team"
+        assert ud.file_list_repr(use_colors=True) != ud.name
+        assert ud.file_list_repr(use_colors=False) == "My Drive"
+
+    def test_document_and_spreadsheet_repr(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "DO", "name": "doc", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "SH", "name": "sheet", "mimeType": SHEET_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        doc = drive.get("~/doc")
+        sheet = drive.get("~/sheet")
+        assert doc.file_list_repr(use_colors=False) == "doc"
+        assert sheet.file_list_repr(use_colors=False) == "sheet"
+        # With colors the names are wrapped in ANSI escapes.
+        assert "doc" in doc.file_list_repr(use_colors=True)
+        assert "\033[" in sheet.file_list_repr(use_colors=True)
+
+    def test_file_list_repr_lists_dirs_before_files(self):
+        from gservices.drive.file_list import FileList
+
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        ud = cast(Folder, drive.get("~"))
+        listing = ud.list()
+        assert isinstance(listing, FileList)
+        # Disable colors so the assertion isn't fooled by escapes.
+        FileList.USE_COLORS = False
+        try:
+            rep = repr(listing)
+            # The folder should appear before the file in the rendered output.
+            assert rep.index("A") < rep.index("f.txt")
+        finally:
+            FileList.USE_COLORS = True
+
+
+# ----------------------------------------------------------------------------
+# Coverage: Folder.handle_file_added/removed when file_list is not loaded
+# ----------------------------------------------------------------------------
+
+
+class TestUncachedHandlers:
+    def test_handle_added_noop_when_list_uncached(self):
+        # A handler call on a folder whose `_file_list` is None should be a
+        # no-op (no crash). Construct a Folder without ever listing it.
+        drive, _ = _make_drive()
+        ud = cast(Folder, drive.get("~"))
+        # Folder constructed but never listed.
+        assert ud._file_list is None  # type: ignore[attr-defined]
+        # Build a throwaway file object to hand to the handler.
+        from gservices.drive.file import File as FileCls
+
+        ghost = FileCls(
+            {"id": "G", "name": "ghost", "mimeType": DOC_MIME,
+             "parents": ["USERDRIVE"]},
+            drive,
+        )
+        ud.handle_file_added(ghost)  # should not crash
+        ud.handle_file_removed(ghost)  # should not crash
+        assert ud._file_list is None  # type: ignore[attr-defined]
+
+
+# ----------------------------------------------------------------------------
+# Coverage: remaining branches — type predicates, error paths, edge cases
+# ----------------------------------------------------------------------------
+
+
+class TestIsPredicates:
+    def test_is_predicates_match_concrete_types(self):
+        drive, _ = _make_drive(
+            drives_list_pages=[
+                {"drives": [
+                    {"id": "SD", "name": "Team", "mimeType": FOLDER_MIME},
+                ]},
+            ],
+            files_list_pages=[
+                {"files": [
+                    {"id": "DO", "name": "doc", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "SH", "name": "sheet", "mimeType": SHEET_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "S", "name": "alias", "mimeType": SHORTCUT_MIME,
+                     "parents": ["USERDRIVE"],
+                     "shortcutDetails": {"targetId": "DO",
+                                         "targetMimeType": DOC_MIME}},
+                ]},
+            ],
+        )
+        list(drive.ls("/"))
+        list(drive.ls("~"))
+        doc = drive.get(id="DO")
+        sheet = drive.get(id="SH")
+        shortcut = drive.get(id="S")
+        sd = drive.get(id="SD")
+
+        assert doc.is_document and not doc.is_spreadsheet
+        assert sheet.is_spreadsheet and not sheet.is_document
+        assert shortcut.is_shortcut
+        assert sd.is_shared_drive
+
+
+class TestMoveToEdgeCases:
+    def test_move_to_non_directory_dest_raises(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "G", "name": "g.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        f = drive.get("~/f.txt")
+        with pytest.raises(NotADirectoryError):
+            # `g.txt` is a file, not a folder — must be rejected as a target.
+            f.move_to(Path.from_string("~/g.txt", drive))
+
+    def test_move_to_same_parent_is_a_noop(self):
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        f = drive.get("~/f.txt")
+        f.move_to(Path.from_string("~", drive))
+        # No `files.update` was issued — the short-circuit fired.
+        assert not resource.files.return_value.update.return_value.execute.called
+
+
+class TestCopyToErrorPath:
+    def test_copy_to_non_directory_parent_raises(self):
+        # Destination's parent is a file, not a folder.
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "S", "name": "src.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        src = drive.get("~/src.txt")
+        with pytest.raises(NotADirectoryError):
+            src.copy_to(Path.from_string("~/f.txt/child.txt", drive))
+
+
+class TestDeletePermanent:
+    def test_delete_with_trash_false_calls_files_delete(self):
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        delete_execute = resource.files.return_value.delete.return_value.execute
+        delete_execute.return_value = None
+        drive.get("~/f.txt").delete(trash=False)
+        kwargs = resource.files.return_value.delete.call_args.kwargs
+        assert kwargs["fileId"] == "F"
+        # And `update` was not called (no `trashed: True` body).
+        assert not resource.files.return_value.update.return_value.execute.called
+
+
+class TestFindRegexFallback:
+    def test_regex_fallback_matches_when_no_exact_name(self):
+        # No file is literally named "f.*" — fall back to regex.
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F1", "name": "foo", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "B", "name": "bar", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        ids = sorted(f.id for f in drive.find("~/f.*"))
+        assert ids == ["F1"]
+
+
+class TestMkfileSpreadsheet:
+    def test_mkfile_spreadsheet_uses_spreadsheet_mime(self):
+        drive, resource = _make_drive()
+        create_execute = resource.files.return_value.create.return_value.execute
+        create_execute.return_value = {
+            "id": "S", "name": "sheet", "mimeType": SHEET_MIME,
+            "parents": ["USERDRIVE"],
+        }
+        drive.mkfile("~/sheet", "spreadsheet")
+        body = resource.files.return_value.create.call_args.kwargs["body"]
+        assert body["mimeType"] == SHEET_MIME
+
+
+class TestMimeTypeOverrides:
+    def test_folder_mime_type_property_is_folder(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "D", "name": "D", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        folder = drive.get("~/D")
+        assert folder.mime_type == FOLDER_MIME
+
+    def test_shortcut_mime_type_property_is_shortcut(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "T", "name": "t.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "S", "name": "s", "mimeType": SHORTCUT_MIME,
+                     "parents": ["USERDRIVE"],
+                     "shortcutDetails": {"targetId": "T",
+                                         "targetMimeType": DOC_MIME}},
+                ]},
+            ],
+        )
+        list(drive.ls("~"))
+        assert drive.get(id="S").mime_type == SHORTCUT_MIME
+
+
+class TestFileListColoredRepr:
+    def test_repr_with_default_colors_includes_ansi(self):
+        from gservices.drive.file_list import FileList
+
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        ud = cast(Folder, drive.get("~"))
+        FileList.USE_COLORS = True  # explicit (this is the module default)
+        rep = repr(ud.list())
+        assert "\033[" in rep
+
+
+class TestRecursiveFolderInvalidation:
+    def test_move_folder_with_subfolders_recurses(self):
+        # Folder structure: ~/A contains subfolder S, which contains file C.
+        # After moving A → ~/B/A, all three should be reachable at the new
+        # paths and unreachable at the old ones.
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "B", "name": "B", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+                {"files": [
+                    {"id": "S", "name": "S", "mimeType": FOLDER_MIME,
+                     "parents": ["A"]},
+                ]},
+                {"files": [
+                    {"id": "C", "name": "c.txt", "mimeType": DOC_MIME,
+                     "parents": ["S"]},
+                ]},
+            ],
+        )
+        list(drive.ls("~"))
+        list(drive.ls("~/A"))
+        list(drive.ls("~/A/S"))
+
+        update_execute = resource.files.return_value.update.return_value.execute
+        update_execute.return_value = {
+            "id": "A", "name": "A", "mimeType": FOLDER_MIME, "parents": ["B"],
+        }
+        drive.get("~/A").move_to(Path.from_string("~/B", drive))
+
+        # The deeply nested descendant is reachable at the new path.
+        assert drive.get("~/B/A/S/c.txt").id == "C"
+
+    def test_delete_folder_with_subfolders_uncaches_recursively(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+                {"files": [
+                    {"id": "S", "name": "S", "mimeType": FOLDER_MIME,
+                     "parents": ["A"]},
+                ]},
+                {"files": [
+                    {"id": "C", "name": "c.txt", "mimeType": DOC_MIME,
+                     "parents": ["S"]},
+                ]},
+            ],
+        )
+        list(drive.ls("~"))
+        list(drive.ls("~/A"))
+        list(drive.ls("~/A/S"))
+
+        drive.get("~/A").delete()
+
+        # Every descendant id is purged from the id cache.
+        for purged in ("A", "S", "C"):
+            assert purged not in drive._ids  # type: ignore[attr-defined]
+
+
+class TestFetchByIdNon404Error:
+    def test_non_404_http_error_is_reraised(self):
+        # A 500 should bubble up, not become FileNotFoundError.
+        drive, resource = _make_drive()
+        execute = MagicMock()
+        execute.execute.side_effect = _http_error(500)
+
+        def _files_get(**_kwargs: Any) -> MagicMock:
+            return execute
+
+        resource.files.return_value.get.side_effect = _files_get
+        with pytest.raises(HttpError):
+            drive.get(id="WHATEVER")
+
+
+class TestLastFewBranches:
+    def test_root_parent_raises(self):
+        # Concrete Root.parent override.
+        drive, _ = _make_drive()
+        with pytest.raises(ValueError, match="doesn't have a parent"):
+            _ = drive.get("/").parent
+
+    def test_get_with_non_folder_parent_raises(self):
+        # `get("/A/B/x")` where `/A/B` is a file → the recursive parent
+        # lookup hits NotADirectoryError inside `get`.
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "f.txt", "mimeType": DOC_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        with pytest.raises(NotADirectoryError, match="not a directory"):
+            drive.get("~/f.txt/child")
+
+    def test_rename_folder_invalidates_descendant_paths(self):
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+                {"files": [
+                    {"id": "C", "name": "c.txt", "mimeType": DOC_MIME,
+                     "parents": ["A"]},
+                ]},
+            ],
+        )
+        list(drive.ls("~"))
+        list(drive.ls("~/A"))
+
+        update_execute = resource.files.return_value.update.return_value.execute
+        update_execute.return_value = {
+            "id": "A", "name": "A2", "mimeType": FOLDER_MIME,
+            "parents": ["USERDRIVE"],
+        }
+        drive.get("~/A").rename("A2")
+        # The descendant is reachable under the new parent name…
+        assert drive.get("~/A2/c.txt").id == "C"
+
+    def test_move_unlisted_folder_is_safe(self):
+        # Moving a folder that hasn't been listed must not crash on the
+        # descendant-invalidation early-return.
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                    {"id": "B", "name": "B", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        # Listing the user drive caches A and B but NOT A's contents.
+        list(drive.ls("~"))
+        update_execute = resource.files.return_value.update.return_value.execute
+        update_execute.return_value = {
+            "id": "A", "name": "A", "mimeType": FOLDER_MIME, "parents": ["B"],
+        }
+        drive.get("~/A").move_to(Path.from_string("~/B", drive))
+        # No crash; the moved folder is still reachable by id.
+        assert drive.get(id="A").name == "A"
+
+    def test_delete_unlisted_folder_is_safe(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "A", "name": "A", "mimeType": FOLDER_MIME,
+                     "parents": ["USERDRIVE"]},
+                ]},
+            ],
+        )
+        list(drive.ls("~"))  # A is cached, but its contents are not.
+        drive.get("~/A").delete()
+        assert "A" not in drive._ids  # type: ignore[attr-defined]
+
+
+class TestBrokenShortcutColoredRepr:
+    def test_broken_shortcut_with_colors_is_dimmed(self):
+        drive, _ = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "S", "name": "alias", "mimeType": SHORTCUT_MIME,
+                     "parents": ["USERDRIVE"],
+                     "shortcutDetails": {"targetId": "MISSING",
+                                         "targetMimeType": DOC_MIME}},
+                ]},
+            ],
+            files_get_404={"MISSING"},
+        )
+        list(drive.ls("~"))
+        shortcut = drive.get(id="S")
+        rep = shortcut.file_list_repr(use_colors=True)
+        # The colored broken repr wraps with the dim escape \033[2m.
+        assert "\033[2m" in rep
+        assert "✘" in rep

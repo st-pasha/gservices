@@ -4,6 +4,7 @@ a `MagicMock` `DriveResource` whose method chains are pre-seeded with canned
 responses.
 """
 
+import pathlib
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -1753,6 +1754,189 @@ class TestLastFewBranches:
         list(drive.ls("~"))  # A is cached, but its contents are not.
         drive.get("~/A").delete()
         assert "A" not in drive._ids  # type: ignore[attr-defined]
+
+
+# ----------------------------------------------------------------------------
+# Issue #23 — first-class content upload / download
+# ----------------------------------------------------------------------------
+
+
+class TestUploadDownload:
+    def _set_create(self, resource: MagicMock, response: dict[str, Any]):
+        resource.files.return_value.create.return_value.execute.return_value = response
+
+    def _media(self, resource: MagicMock) -> Any:
+        """The `media_body` passed to the last files().create call."""
+        return resource.files.return_value.create.call_args.kwargs["media_body"]
+
+    def _media_bytes(self, media: Any) -> bytes:
+        return media.getbytes(0, media.size())
+
+    def test_upload_bytes(self):
+        drive, resource = _make_drive()
+        self._set_create(resource, {
+            "id": "F1", "name": "data.bin", "mimeType": "application/octet-stream",
+            "parents": ["USERDRIVE"],
+        })
+        f = drive.user_drive.upload("data.bin", b"\x00\x01\x02")
+
+        media = self._media(resource)
+        assert self._media_bytes(media) == b"\x00\x01\x02"
+        # Unknown extension -> octet-stream fallback.
+        assert media.mimetype() == "application/octet-stream"
+        kwargs = resource.files.return_value.create.call_args.kwargs
+        assert kwargs["body"] == {"name": "data.bin", "parents": ["USERDRIVE"]}
+        assert kwargs["supportsAllDrives"] is True
+        # The returned file is cached and addressable by path afterwards.
+        assert f.id == "F1"
+        assert drive.get("~/data.bin") is f
+
+    def test_upload_str_defaults_to_text_plain(self):
+        drive, resource = _make_drive()
+        self._set_create(resource, {
+            "id": "N", "name": "notes", "mimeType": "text/plain",
+            "parents": ["USERDRIVE"],
+        })
+        drive.user_drive.upload("notes", "hello world")
+
+        media = self._media(resource)
+        assert self._media_bytes(media) == b"hello world"
+        assert media.mimetype() == "text/plain"
+
+    def test_upload_infers_mime_from_name(self):
+        drive, resource = _make_drive()
+        self._set_create(resource, {
+            "id": "J", "name": "snap.json", "mimeType": "application/json",
+            "parents": ["USERDRIVE"],
+        })
+        drive.user_drive.upload("snap.json", b"{}")
+        assert self._media(resource).mimetype() == "application/json"
+
+    def test_upload_mime_type_override_wins(self):
+        drive, resource = _make_drive()
+        self._set_create(resource, {
+            "id": "P", "name": "snap.json", "mimeType": "image/png",
+            "parents": ["USERDRIVE"],
+        })
+        drive.user_drive.upload("snap.json", b"\x89PNG", mime_type="image/png")
+        # Explicit mime_type beats the .json inference.
+        assert self._media(resource).mimetype() == "image/png"
+
+    def test_upload_from_pathlib_path(self, tmp_path: pathlib.Path):
+        src = tmp_path / "report.csv"
+        src.write_bytes(b"a,b,c\n1,2,3")
+        drive, resource = _make_drive()
+        self._set_create(resource, {
+            "id": "C", "name": "report.csv", "mimeType": "text/csv",
+            "parents": ["USERDRIVE"],
+        })
+        drive.user_drive.upload("report.csv", src)
+
+        media = self._media(resource)
+        assert self._media_bytes(media) == b"a,b,c\n1,2,3"
+        assert media.mimetype() == "text/csv"
+
+    def test_upload_appends_to_loaded_listing(self):
+        drive, resource = _make_drive(files_list_pages=[{"files": []}])
+        drive.user_drive.list()  # load (empty) listing
+        self._set_create(resource, {
+            "id": "A", "name": "a.bin", "mimeType": "application/octet-stream",
+            "parents": ["USERDRIVE"],
+        })
+        f = drive.user_drive.upload("a.bin", b"x")
+        assert f in drive.user_drive.list()
+
+    def test_duplicate_uploads_create_distinct_files(self):
+        drive, resource = _make_drive()
+        # Drive permits duplicate child names — each upload is a separate file,
+        # which is what enables version retention.
+        resource.files.return_value.create.return_value.execute.side_effect = [
+            {"id": "V1", "name": "snap.json", "mimeType": "application/json",
+             "parents": ["USERDRIVE"]},
+            {"id": "V2", "name": "snap.json", "mimeType": "application/json",
+             "parents": ["USERDRIVE"]},
+        ]
+        f1 = drive.user_drive.upload("snap.json", b"{}")
+        f2 = drive.user_drive.upload("snap.json", b"{}")
+        assert (f1.id, f2.id) == ("V1", "V2")
+        assert drive.get(id="V1") is f1
+        assert drive.get(id="V2") is f2
+        # The shared path is now ambiguous and must be disambiguated by id.
+        with pytest.raises(ValueError, match="ambiguous"):
+            drive.get("~/snap.json")
+
+    def test_download_returns_bytes(self):
+        drive, resource = _make_drive(files_get_by_id={
+            "F": {"id": "F", "name": "a.bin",
+                  "mimeType": "application/octet-stream", "parents": ["USERDRIVE"]},
+        })
+        get_media = resource.files.return_value.get_media
+        get_media.return_value.execute.return_value = b"payload"
+        f = drive.get(id="F")
+        assert f.download() == b"payload"
+        assert get_media.call_args.kwargs["fileId"] == "F"
+        assert get_media.call_args.kwargs["supportsAllDrives"] is True
+
+    def test_download_workspace_item_raises(self):
+        drive, _ = _make_drive(files_get_by_id={
+            "S": {"id": "S", "name": "sheet", "mimeType": SHEET_MIME,
+                  "parents": ["USERDRIVE"]},
+        })
+        f = drive.get(id="S")
+        with pytest.raises(ValueError, match="Workspace item"):
+            f.download()
+
+    def test_update_content_overwrites_in_place(self):
+        drive, resource = _make_drive(files_get_by_id={
+            "F": {"id": "F", "name": "a.json", "mimeType": "application/json",
+                  "parents": ["USERDRIVE"]},
+        })
+        resource.files.return_value.update.return_value.execute.return_value = {
+            "id": "F", "name": "a.json", "mimeType": "application/json",
+            "parents": ["USERDRIVE"],
+        }
+        f = drive.get(id="F")
+        f.update_content(b'{"k":1}')
+
+        kwargs = resource.files.return_value.update.call_args.kwargs
+        media = kwargs["media_body"]
+        assert media.getbytes(0, media.size()) == b'{"k":1}'
+        assert media.mimetype() == "application/json"  # inferred from name
+        assert kwargs["fileId"] == "F"
+        # id / name / path are unchanged.
+        assert f.id == "F"
+        assert drive.get(id="F") is f
+
+    def test_update_content_resets_loaded_flag(self):
+        drive, resource = _make_drive(files_get_by_id={
+            "F": {"id": "F", "name": "a.bin",
+                  "mimeType": "application/octet-stream", "parents": ["USERDRIVE"]},
+        })
+        f = drive.get(id="F")
+        # Load extended properties once (size etc.) via a fields="*" fetch.
+        full = {"id": "F", "name": "a.bin", "mimeType": "application/octet-stream",
+                "parents": ["USERDRIVE"], "size": "3"}
+        resource.files.return_value.get.side_effect = None
+        resource.files.return_value.get.return_value.execute.return_value = full
+        assert f.size == 3
+
+        resource.files.return_value.update.return_value.execute.return_value = {
+            "id": "F", "name": "a.bin", "mimeType": "application/octet-stream",
+            "parents": ["USERDRIVE"],
+        }
+        f.update_content(b"new content")
+        # Re-fetch is forced after a content update — new size is observed.
+        full["size"] = "11"
+        assert f.size == 11
+
+    def test_update_content_workspace_item_raises(self):
+        drive, _ = _make_drive(files_get_by_id={
+            "S": {"id": "S", "name": "sheet", "mimeType": SHEET_MIME,
+                  "parents": ["USERDRIVE"]},
+        })
+        f = drive.get(id="S")
+        with pytest.raises(ValueError, match="Workspace item"):
+            f.update_content(b"data")
 
 
 class TestBrokenShortcutColoredRepr:

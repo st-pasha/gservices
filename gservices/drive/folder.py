@@ -1,7 +1,10 @@
+from io import BytesIO
 from typing import TYPE_CHECKING, ClassVar, Literal
 
+from googleapiclient.http import MediaIoBaseUpload  # type: ignore
+
 from gservices.drive.document_file import DocumentFile
-from gservices.drive.file import File
+from gservices.drive.file import Content, File
 
 # `SpreadsheetFile` is imported function-local in `make_file()` to avoid a
 # circular import: spreadsheet.py -> spreadsheet_file.py -> file.py -> folder.py
@@ -65,6 +68,45 @@ class Folder(File):
                     "mimeType": mime_type,
                     "parents": [self.id],
                 },
+                fields=File.FIELDS,
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        new_file = File.resolve_from_mime(res, self._drive)
+        self._drive.cache(new_file)
+        self.handle_file_added(new_file)
+        return new_file
+
+    def upload(
+        self,
+        name: str,
+        data: Content,
+        *,
+        mime_type: str | None = None,
+    ) -> File:
+        """
+        Create a new file [name] with binary content under this folder and
+        return it.
+
+        [data] may be raw bytes, a text string (encoded as UTF-8), or a
+        `pathlib.Path` whose bytes are read in. [mime_type] overrides the MIME
+        type inferred from [name] / [data].
+
+        Drive permits duplicate child names, so repeated uploads of the same
+        [name] create distinct files rather than overwriting — this is what
+        enables retaining every version over time. To overwrite an existing
+        file's content instead, use `File.update_content`.
+        """
+        content, inferred = File._coerce_content(data, name)
+        media = MediaIoBaseUpload(
+            BytesIO(content), mimetype=mime_type or inferred, resumable=False
+        )
+        res = (
+            self._drive.resource.files()
+            .create(
+                body={"name": name, "parents": [self.id]},
+                media_body=media,
                 fields=File.FIELDS,
                 supportsAllDrives=True,
             )

@@ -1,5 +1,10 @@
 import datetime as dt
+import mimetypes
+import pathlib
+from io import BytesIO
 from typing import TYPE_CHECKING, cast
+
+from googleapiclient.http import MediaIoBaseUpload  # type: ignore
 
 from gservices.drive.path import Path
 
@@ -7,6 +12,10 @@ if TYPE_CHECKING:
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
 
     from gservices.drive.drive_service import DriveService
+
+# Content accepted by `upload` / `update_content`: raw bytes, a text string
+# (encoded as UTF-8), or a filesystem path whose bytes are read in.
+Content = bytes | str | pathlib.Path
 
 
 class File:
@@ -42,6 +51,29 @@ class File:
         else:
             cls = File
         return cls(data, service)
+
+    @staticmethod
+    def _coerce_content(data: Content, name: str | None) -> tuple[bytes, str]:
+        """
+        Normalize [data] into raw bytes plus an inferred MIME type.
+
+        - `pathlib.Path` -> the file's bytes; MIME guessed from the path's name.
+        - `str`          -> UTF-8 bytes; MIME guessed from [name], else text/plain.
+        - `bytes`        -> used as-is; MIME guessed from [name], else octet-stream.
+
+        [name] is the eventual Drive file name, used as the primary hint for
+        MIME inference.
+        """
+        if isinstance(data, pathlib.Path):
+            content = data.read_bytes()
+            mime = mimetypes.guess_type(name or data.name)[0]
+        elif isinstance(data, str):
+            content = data.encode("utf-8")
+            mime = (mimetypes.guess_type(name)[0] if name else None) or "text/plain"
+        else:
+            content = bytes(data)
+            mime = mimetypes.guess_type(name)[0] if name else None
+        return content, mime or "application/octet-stream"
 
     # ----------------------------------------------------------------------------------
     # Properties
@@ -290,6 +322,57 @@ class File:
             self._uncache_descendants_for_delete()
         self._drive.uncache(self)
         self.parent.handle_file_removed(self)
+
+    def download(self) -> bytes:
+        """
+        Download and return the raw content bytes of this file.
+
+        Only works for binary "blob" files (PDFs, images, JSON, ...). Workspace
+        items — folders, Sheets, Docs, Slides, Drawings, shortcuts — have no
+        downloadable bytes; call `DriveService.resource` to export them instead.
+        """
+        if self.mime_type.startswith("application/vnd.google-apps."):
+            raise ValueError(
+                f"Cannot download `{self.name}`: it is a Workspace item "
+                f"({self.mime_type}) with no raw byte content. Export it via "
+                f"`DriveService.resource` instead."
+            )
+        return (
+            self._drive.resource.files()
+            .get_media(fileId=self.id, supportsAllDrives=True)
+            .execute()
+        )
+
+    def update_content(self, data: Content, *, mime_type: str | None = None) -> None:
+        """
+        Overwrite this file's content in place with [data] (bytes, a text string,
+        or a `pathlib.Path` to read from). The file's id, name, and path are
+        unchanged. [mime_type] overrides the inferred MIME type.
+
+        Only works for binary "blob" files; Workspace items have no raw bytes.
+        """
+        if self.mime_type.startswith("application/vnd.google-apps."):
+            raise ValueError(
+                f"Cannot update content of `{self.name}`: it is a Workspace item "
+                f"({self.mime_type}) with no raw byte content."
+            )
+        content, inferred = File._coerce_content(data, self.name)
+        media = MediaIoBaseUpload(
+            BytesIO(content), mimetype=mime_type or inferred, resumable=False
+        )
+        res = (
+            self._drive.resource.files()
+            .update(
+                fileId=self.id,
+                media_body=media,
+                fields=File.FIELDS,
+                supportsAllDrives=bool(self.shared_drive_id),
+            )
+            .execute()
+        )
+        self._data = res
+        # Size / modifiedTime / version changed; force a re-fetch on next access.
+        self._loaded = False
 
     def __str__(self) -> str:
         return str(self.path)

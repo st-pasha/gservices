@@ -124,6 +124,71 @@ drops the entry.
 
 Deleting the Root, a `UserDrive`, or a `SharedDrive` raises `RuntimeError`.
 
+### `download()`
+
+```python
+raw = drive.get("~/exports/snapshot.json").download()   # -> bytes
+```
+
+Downloads and returns the file's raw content bytes via `files.get_media`.
+Works only for binary "blob" files (JSON, PDFs, images, ...). Workspace
+items — folders, Sheets, Docs, Slides, Drawings, shortcuts — have no
+downloadable bytes; calling `download()` on one raises `ValueError`. To
+export a Workspace document as XLSX / PDF / Markdown, drop down to the
+[raw resource](#escape-hatch-the-raw-resource).
+
+### `update_content(data, *, mime_type=None)`
+
+```python
+file.update_content(b'{"k": 1}')                 # bytes
+file.update_content("hello", mime_type="text/x") # str -> UTF-8
+file.update_content(pathlib.Path("local.csv"))   # read from disk
+```
+
+Overwrites the file's content in place via `files.update` with a media
+body. The id, name, and path are unchanged. `data` may be `bytes`, a `str`
+(encoded as UTF-8), or a `pathlib.Path` whose bytes are read in; see
+[Content I/O](#content-io-upload--download) for MIME inference. As with
+`download()`, this raises `ValueError` on Workspace items.
+
+## Content I/O: upload / download
+
+The wrapper handles raw byte upload (`Folder.upload`), download
+(`File.download`), and in-place content replacement (`File.update_content`)
+for ordinary "blob" files, setting `supportsAllDrives` and `parents`
+automatically so it works in shared drives.
+
+`data` accepted by `upload` / `update_content` is one of:
+
+| Type           | Treated as                          |
+| -------------- | ----------------------------------- |
+| `bytes`        | raw content, used as-is             |
+| `str`          | text content, encoded as UTF-8      |
+| `pathlib.Path` | a local file whose bytes are read   |
+
+**MIME inference.** When `mime_type` is not given it is inferred via
+`mimetypes.guess_type`: for `upload` from the new file's `name` (falling
+back to the source path's name); for `update_content` from the existing
+file's name. If inference fails, a `str` defaults to `text/plain` and
+everything else to `application/octet-stream`.
+
+```python
+folder = drive.get("/System/delivery-logs")
+assert isinstance(folder, Folder)
+
+# Archive a snapshot, keeping every version (Drive allows duplicate names).
+folder.upload("orders.json", snapshot_bytes)   # -> File
+folder.upload("orders.json", snapshot_bytes)   # a second, distinct File
+```
+
+`Folder.upload(name, data, *, mime_type=None)` creates a **new** file via
+`files.create` and returns the cached, path-addressable `File`. It never
+overwrites: Drive permits duplicate child names, so repeated uploads of the
+same `name` create distinct files — this is what enables retaining every
+version over time. To overwrite an existing file's content instead, use
+`File.update_content`. Workspace documents (Sheets / Docs export) are a
+separate concern handled through the [raw resource](#escape-hatch-the-raw-resource).
+
 ## Subtype specifics
 
 ### `Folder`
@@ -132,6 +197,7 @@ Deleting the Root, a `UserDrive`, or a `SharedDrive` raises `RuntimeError`.
 folder = drive.get("~/Reports")
 folder.list()                              # FileList — paginated, cached
 folder.make_file("Q2.gsheet", "spreadsheet")
+folder.upload("notes.txt", "hello")        # new blob file with content
 ```
 
 `Folder.list()` returns a `FileList` (a `list[File]` with a tree-style
@@ -143,6 +209,10 @@ this wrapper keep it in sync.
 `Folder.make_file(name, kind)` creates a new file under this folder and
 returns the typed instance. See [shell.md](shell.md#mkdir-and-mkfile) for
 the available kinds.
+
+`Folder.upload(name, data, *, mime_type=None)` creates a new blob file with
+content under this folder. See
+[Content I/O](#content-io-upload--download).
 
 ### `Root`
 

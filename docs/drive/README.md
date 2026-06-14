@@ -51,10 +51,13 @@ GoogleServices.Drive             →  DriveService           entry point
         .move_to(dest_dir_path)
         .copy_to(dest_path)
         .delete(trash=True)
+        .download()              →  bytes  (blob files only)
+        .update_content(data)
 
       ├── Folder                 a directory
       │     .list()              →  FileList
       │     .make_file(name, kind)
+      │     .upload(name, data)  →  File   (blob files only)
       │   ├── Root               the synthetic "/" above My Drive + shared drives
       │   ├── UserDrive          "My Drive"
       │   └── SharedDrive        one shared drive
@@ -98,6 +101,9 @@ the tree — not a server-side concept. See [paths.md](paths.md).
   modified time, version, starred, trashed
 - **File lifecycle** — `rename`, `move_to`, `copy_to`, `delete`
   (trash or permanent); folders copy recursively
+- **Content I/O** — `Folder.upload` (bytes / text / local file),
+  `File.download`, `File.update_content` for ordinary blob files; works in
+  shared drives, integrates with the path/cache layer
 - **Folder operations** — `list` (with automatic pagination), `make_file`
   for creating Docs / Sheets / Slides / Drawings / sub-folders
 - **Shortcuts** — target resolution, broken-shortcut detection
@@ -109,8 +115,8 @@ the tree — not a server-side concept. See [paths.md](paths.md).
 ### Not supported (use `DriveService.resource` for the raw API)
 
 - **Permissions** — sharing, role changes, link sharing
-- **Content I/O** — uploading / downloading file bytes; exporting Workspace
-  documents as XLSX / PDF / Markdown
+- **Workspace-doc export** — exporting Sheets / Docs / Slides as
+  XLSX / PDF / Markdown (raw blob upload / download *is* supported; see above)
 - **Revisions** — listing or restoring revisions, exporting at a revision
 - **Comments / replies**
 - **Drive activity** / changes feed / push notifications

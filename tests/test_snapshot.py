@@ -178,6 +178,14 @@ class TestSerialToIso:
         # 2024-06-15 at noon
         assert _serial_to_iso(45458.5, "DATE_TIME") == "2024-06-15T12:00:00"
 
+    def test_overflow_serial_returns_none(self):
+        # A serial larger than timedelta's C-int range can't be converted.
+        assert _serial_to_iso(1e20, "DATE") is None
+
+    def test_out_of_range_serial_returns_none(self):
+        # Representable as a timedelta but pushes the datetime past year 9999.
+        assert _serial_to_iso(4_000_000.0, "DATE") is None
+
 
 # ----------------------------------------------------------------------------
 # _encode_cell_value
@@ -198,6 +206,11 @@ class TestEncodeCellValue:
 
     def test_number_with_date_format(self):
         assert _encode_cell_value({"numberValue": 45458.0}, "DATE") == "2024-06-15"
+
+    def test_huge_number_with_date_format_falls_back_to_raw(self):
+        # A huge number that merely carries a date format must not crash;
+        # it falls back to the raw number.
+        assert _encode_cell_value({"numberValue": 1e20}, "DATE") == 1e20
 
     def test_bool_true(self):
         assert _encode_cell_value({"boolValue": True}, None) is True

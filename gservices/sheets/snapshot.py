@@ -612,7 +612,12 @@ def _encode_cell_value(
     n = value.get("numberValue")
     if n is not None:
         if nf_type in _DATE_FORMAT_TYPES:
-            return _serial_to_iso(n, nf_type)
+            iso = _serial_to_iso(n, nf_type)
+            # Serials outside datetime's representable range (e.g. a huge
+            # number that merely happens to carry a date format) can't be
+            # converted — fall back to the raw number rather than crashing.
+            if iso is not None:
+                return iso
         return n
     s = value.get("stringValue")
     if s is not None:
@@ -620,10 +625,16 @@ def _encode_cell_value(
     return None
 
 
-def _serial_to_iso(serial: float, nf_type: str) -> str:
+def _serial_to_iso(serial: float, nf_type: str) -> str | None:
     days = int(serial)
     fraction = serial - days
-    dt = _DATE_EPOCH + timedelta(days=days, seconds=fraction * 86400)
+    try:
+        dt = _DATE_EPOCH + timedelta(days=days, seconds=fraction * 86400)
+    except (OverflowError, ValueError):
+        # `days` exceeds timedelta's C-int range, or the resulting datetime
+        # falls outside [datetime.min, datetime.max]. Signal the caller to
+        # keep the raw number instead.
+        return None
     if nf_type == "DATE":
         return dt.date().isoformat()
     if nf_type == "TIME":

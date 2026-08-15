@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from googleapiclient.discovery import build  # type: ignore
 
 from gservices.json_model import OrjsonModel
+from gservices.retrying_http_request import DEFAULT_NUM_RETRIES, RetryingHttpRequest
 
 if TYPE_CHECKING:
     import googleapiclient._apis.gmail.v1.resources as g  # type: ignore
@@ -19,9 +20,21 @@ class GmailService:
         self._thread_cache: dict[str, Thread] = {}
 
     @staticmethod
-    def build(credentials: Credentials) -> GmailService:
+    def build(
+        credentials: Credentials, num_retries: int = DEFAULT_NUM_RETRIES
+    ) -> GmailService:
+        """
+        Builds a Gmail v1 service on [credentials].
+
+        Every request it issues retries transient failures up to [num_retries]
+        times — see `RetryingHttpRequest`.
+        """
         resource = build(
-            "gmail", "v1", credentials=credentials, model=OrjsonModel()
+            "gmail",
+            "v1",
+            credentials=credentials,
+            model=OrjsonModel(),
+            requestBuilder=RetryingHttpRequest.builder(num_retries),
         )
         return GmailService(resource)
 

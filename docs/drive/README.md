@@ -85,6 +85,8 @@ the tree — not a server-side concept. See [paths.md](paths.md).
   per-file properties and operations
 - [**caching.md**](caching.md) — what the `DriveService` caches, when entries
   become stale, duplicate names, escape hatches
+- [**../retries.md**](../retries.md) — how transient API failures (`503`, `429`,
+  dropped sockets) are retried, and how to tune or disable that
 
 ## Feature coverage
 

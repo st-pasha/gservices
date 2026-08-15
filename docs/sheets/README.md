@@ -99,6 +99,8 @@ See [spreadsheet.md](spreadsheet.md) for `save()` semantics.
   `exclusive_edit()`, what they catch and what they don't
 - [**snapshot.md**](snapshot.md) — `Spreadsheet.snapshot()` / `save_snapshot()`,
   the git-diff-friendly format
+- [**../retries.md**](../retries.md) — how transient API failures (`503`, `429`,
+  dropped sockets) are retried, and how to tune or disable that
 
 ## Feature coverage
 

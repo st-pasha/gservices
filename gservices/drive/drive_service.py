@@ -10,6 +10,7 @@ from gservices.drive.folder import Folder
 from gservices.drive.path import Path
 from gservices.drive.root import Root, UserDrive
 from gservices.json_model import OrjsonModel
+from gservices.retrying_http_request import DEFAULT_NUM_RETRIES, RetryingHttpRequest
 
 if TYPE_CHECKING:
     import googleapiclient._apis.drive.v3.resources as g  # type: ignore
@@ -30,9 +31,21 @@ class DriveService:
         self._user_drive: UserDrive = root.user_drive
 
     @staticmethod
-    def build(credentials: Credentials) -> DriveService:
+    def build(
+        credentials: Credentials, num_retries: int = DEFAULT_NUM_RETRIES
+    ) -> DriveService:
+        """
+        Builds a Drive v3 service on [credentials].
+
+        Every request it issues retries transient failures up to [num_retries]
+        times — see `RetryingHttpRequest`.
+        """
         resource = build(
-            "drive", "v3", credentials=credentials, model=OrjsonModel()
+            "drive",
+            "v3",
+            credentials=credentials,
+            model=OrjsonModel(),
+            requestBuilder=RetryingHttpRequest.builder(num_retries),
         )
         return DriveService(resource)
 

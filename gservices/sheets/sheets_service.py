@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from googleapiclient.discovery import build  # type: ignore
 
 from gservices.json_model import OrjsonModel
+from gservices.retrying_http_request import DEFAULT_NUM_RETRIES, RetryingHttpRequest
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.resources as gr  # type: ignore[reportMissingModuleSource]
@@ -13,9 +14,23 @@ if TYPE_CHECKING:
 
 class SheetsService:
     @staticmethod
-    def build(credentials: Credentials, google: GoogleServices) -> SheetsService:
+    def build(
+        credentials: Credentials,
+        google: GoogleServices,
+        num_retries: int = DEFAULT_NUM_RETRIES,
+    ) -> SheetsService:
+        """
+        Builds a Sheets v4 service on [credentials].
+
+        Every request it issues retries transient failures up to [num_retries]
+        times — see `RetryingHttpRequest`.
+        """
         resource = build(
-            "sheets", "v4", credentials=credentials, model=OrjsonModel()
+            "sheets",
+            "v4",
+            credentials=credentials,
+            model=OrjsonModel(),
+            requestBuilder=RetryingHttpRequest.builder(num_retries),
         )
         return SheetsService(resource, google)
 

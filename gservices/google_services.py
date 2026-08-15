@@ -12,16 +12,33 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from gservices.drive.drive_service import DriveService
 from gservices.gmail.gmail_service import GmailService
 from gservices.oauth2_scopes import OAuth2Scope
+from gservices.retrying_http_request import DEFAULT_NUM_RETRIES
 from gservices.sheets.sheets_service import SheetsService
 
 
 class GoogleServices:
-    def __init__(self, credentials: Credentials, token_updated: bool = False):
+    def __init__(
+        self,
+        credentials: Credentials,
+        token_updated: bool = False,
+        num_retries: int = DEFAULT_NUM_RETRIES,
+    ):
+        """
+        Wraps [credentials] as the entry point to the Drive / Gmail / Sheets
+        services, each built lazily on first access.
+
+        Requests issued by those services retry transient failures — a `503`
+        from an overloaded backend, a rate-limit `429`, a dropped socket — up
+        to [num_retries] times with exponential backoff. Pass `num_retries=0`
+        to disable that and have every failure surface immediately. See
+        `RetryingHttpRequest` for what counts as transient.
+        """
         self._credentials = credentials
         self._drive_service: DriveService | None = None
         self._gmail_service: GmailService | None = None
         self._sheets_service: SheetsService | None = None
         self._token_updated = token_updated
+        self._num_retries = num_retries
 
     @staticmethod
     def connect(
@@ -29,6 +46,7 @@ class GoogleServices:
         credentials: dict[str, Any] | None = None,
         scopes: Sequence[OAuth2Scope] | None = None,
         log: _Logger | None = None,
+        num_retries: int = DEFAULT_NUM_RETRIES,
     ) -> GoogleServices:
         """
         Initialize Google API Service, using an existing [token] or obtaining
@@ -52,6 +70,9 @@ class GoogleServices:
         Console, it will contain the application id and a secret key. The
         credentials data will be used to request an access token; consequently
         this parameter may be omitted if a valid [token] is supplied.
+
+        The [num_retries] parameter controls how many times a transient API
+        failure is retried; see `GoogleServices.__init__`.
         """
         creds: UserCredentials | None = None
         token_updated = False
@@ -95,13 +116,14 @@ class GoogleServices:
             token.update(json.loads(creds.to_json()))
             token_updated = True
 
-        return GoogleServices(creds, token_updated)
+        return GoogleServices(creds, token_updated, num_retries)
 
     @staticmethod
     def from_service_account_file(
         filename: str | pathlib.Path,
         scopes: Sequence[OAuth2Scope],
         subject: str | None = None,
+        num_retries: int = DEFAULT_NUM_RETRIES,
     ) -> GoogleServices:
         """
         Initialize Google API Service using a service account key file.
@@ -114,19 +136,23 @@ class GoogleServices:
         user. This is used for domain-wide delegation in Google Workspace —
         the service account must be authorized for delegation, and [subject]
         must be a user in the workspace.
+
+        The [num_retries] parameter controls how many times a transient API
+        failure is retried; see `GoogleServices.__init__`.
         """
         creds = ServiceAccountCredentials.from_service_account_file(
             str(filename), scopes=list(scopes)
         )
         if subject:
             creds = creds.with_subject(subject)
-        return GoogleServices(creds)
+        return GoogleServices(creds, num_retries=num_retries)
 
     @staticmethod
     def from_service_account_info(
         info: dict[str, Any],
         scopes: Sequence[OAuth2Scope],
         subject: str | None = None,
+        num_retries: int = DEFAULT_NUM_RETRIES,
     ) -> GoogleServices:
         """
         Initialize Google API Service using a service account key dict.
@@ -140,17 +166,22 @@ class GoogleServices:
         )
         if subject:
             creds = creds.with_subject(subject)
-        return GoogleServices(creds)
+        return GoogleServices(creds, num_retries=num_retries)
 
     @staticmethod
-    def from_file(file_name: str | pathlib.Path) -> GoogleServices:
+    def from_file(
+        file_name: str | pathlib.Path, num_retries: int = DEFAULT_NUM_RETRIES
+    ) -> GoogleServices:
         data = json.loads(pathlib.Path(file_name).read_text())
         if "credentials" not in data:
             raise ValueError("Missing `credentials` field in the file")
         credentials = data["credentials"]
         token = data.get("token", {})
         google = GoogleServices.connect(
-            credentials=credentials, token=token, scopes=data.get("scopes", [])
+            credentials=credentials,
+            token=token,
+            scopes=data.get("scopes", []),
+            num_retries=num_retries,
         )
         if google.token_updated:
             data["token"] = token
@@ -160,19 +191,25 @@ class GoogleServices:
     @property
     def Drive(self) -> DriveService:
         if self._drive_service is None:
-            self._drive_service = DriveService.build(self._credentials)
+            self._drive_service = DriveService.build(
+                self._credentials, self._num_retries
+            )
         return self._drive_service
 
     @property
     def Gmail(self) -> GmailService:
         if self._gmail_service is None:
-            self._gmail_service = GmailService.build(self._credentials)
+            self._gmail_service = GmailService.build(
+                self._credentials, self._num_retries
+            )
         return self._gmail_service
 
     @property
     def Sheets(self) -> SheetsService:
         if self._sheets_service is None:
-            self._sheets_service = SheetsService.build(self._credentials, self)
+            self._sheets_service = SheetsService.build(
+                self._credentials, self, self._num_retries
+            )
         return self._sheets_service
 
     @property

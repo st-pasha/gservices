@@ -3,6 +3,8 @@ from typing import Any
 
 from googleapiclient.http import HttpRequest
 
+from gservices.rate_limiter import RateLimiter
+
 # How many times a request is retried when no count is given explicitly.
 # Backoff before attempt `k + 1` is a random wait in `[0, 2**k)` seconds, so
 # five retries spend at most ~62s (~31s on average) waiting before giving up —
@@ -36,35 +38,54 @@ class RetryingHttpRequest(HttpRequest):
     failed on the way back is sent again. Every call the wrapper itself makes is
     a read or an idempotent write, so a duplicate is harmless — but keep it in
     mind before routing a non-idempotent operation through a retrying service.
+
+    Optionally the same seam also *paces* requests. Retrying handles a burst;
+    it cannot get a caller through a quota that is simply too small, and a job
+    that steadily overspends its allowance dies once some call exhausts its
+    retry budget. Passing a `RateLimiter` makes every request wait its turn
+    instead, so the service runs at the quota rather than into it.
     """
 
     @staticmethod
     def builder(
         num_retries: int = DEFAULT_NUM_RETRIES,
+        limiter: RateLimiter | None = None,
     ) -> Callable[..., HttpRequest]:
         """
         Returns a `requestBuilder` for `googleapiclient.discovery.build()`
         whose requests retry up to [num_retries] times.
 
         Pass `num_retries=0` to get the stock, no-retry behaviour back.
+
+        Every request built by the returned callable shares [limiter], so the
+        pacing applies across the service rather than per call. `None` — the
+        default — means no pacing.
         """
         if num_retries < 0:
             raise ValueError(f"`num_retries` must be non-negative, got {num_retries}")
 
         def build_request(*args: Any, **kwargs: Any) -> HttpRequest:
-            return RetryingHttpRequest(*args, num_retries=num_retries, **kwargs)
+            return RetryingHttpRequest(
+                *args, num_retries=num_retries, limiter=limiter, **kwargs
+            )
 
         return build_request
 
     def execute(self, http: Any = None, num_retries: int | None = None) -> Any:
         """
-        Executes the request, retrying transient failures.
+        Executes the request, waiting its turn and retrying transient failures.
 
         [num_retries] overrides the count bound at construction for this one
         call; when it is None (the default) the bound count applies.
+
+        Pacing covers the first attempt only. Retries are driven by the client
+        underneath and back off on their own — and if the limiter is doing its
+        job there are no rate-limit retries left to pace.
         """
         if num_retries is None:
             num_retries = self._num_retries
+        if self._limiter is not None:
+            _ = self._limiter.acquire()
         return super().execute(http=http, num_retries=num_retries)
 
     # ----------------------------------------------------------------------------------
@@ -72,10 +93,15 @@ class RetryingHttpRequest(HttpRequest):
     # ----------------------------------------------------------------------------------
 
     def __init__(
-        self, *args: Any, num_retries: int = DEFAULT_NUM_RETRIES, **kwargs: Any
+        self,
+        *args: Any,
+        num_retries: int = DEFAULT_NUM_RETRIES,
+        limiter: RateLimiter | None = None,
+        **kwargs: Any,
     ):
         """
-        Wraps `HttpRequest`, binding [num_retries] to every `execute()` call.
+        Wraps `HttpRequest`, binding [num_retries] and [limiter] to every
+        `execute()` call.
 
         The remaining arguments are passed through untouched. Typically you
         don't call this directly — `googleapiclient` does, via the callable
@@ -83,6 +109,7 @@ class RetryingHttpRequest(HttpRequest):
         """
         super().__init__(*args, **kwargs)
         self._num_retries = num_retries
+        self._limiter = limiter
 
         # `HttpRequest.__init__` assigns these two — `time.sleep` and
         # `random.random`, which the retry loop uses to space out attempts —

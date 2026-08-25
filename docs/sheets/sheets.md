@@ -46,6 +46,30 @@ widest row.
 For typed access (numbers as numbers, formulas as `Formula` objects), use
 `sheet.cell(r, c).value` — see [cells.md](cells.md).
 
+## Choosing when the fetch happens
+
+```python
+sheet.load()   # fetch the grid now, if it hasn't been fetched already
+```
+
+Everything loads on demand, so `load()` is never required. It exists because
+the order in which you touch a sheet decides how many requests that costs:
+`values` / `rows` / `columns` / `column_count` are served by a cheap
+`values.get`, while cells, formats and row properties need the full grid.
+Reaching for the cheap one first and the rich one afterwards is two round trips
+for one sheet:
+
+```python
+print(len(sheet.rows))         # values.get
+print(sheet.cell(0, 0).value)  # ...and now the grid too — two requests
+
+sheet.load()                   # or: one request, and values come from the grid
+print(len(sheet.rows), sheet.cell(0, 0).value)
+```
+
+That matters when walking many sheets against a per-minute quota — see
+[../rate-limiting.md](../rate-limiting.md).
+
 ## Looking up cells
 
 ```python
@@ -187,3 +211,5 @@ them, drop down to `sheet.spreadsheet._service.resource` for raw API access.
 - [cells.md](cells.md) — `Cell`, value types, hyperlinks
 - [formatting.md](formatting.md) — `CellFormat`, `BorderFormat`
 - [metadata.md](metadata.md) — `DeveloperMetadata` on rows, columns, and sheets
+- [../rate-limiting.md](../rate-limiting.md) — `Sheet.load()` and the per-minute
+  quota it exists to save

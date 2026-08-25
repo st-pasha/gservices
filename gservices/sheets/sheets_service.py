@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from googleapiclient.discovery import build  # type: ignore
 
 from gservices.json_model import OrjsonModel
+from gservices.rate_limiter import RateLimiter
 from gservices.retrying_http_request import DEFAULT_NUM_RETRIES, RetryingHttpRequest
 
 if TYPE_CHECKING:
@@ -12,25 +13,46 @@ if TYPE_CHECKING:
     from gservices.google_services import GoogleServices
 
 
+DEFAULT_REQUESTS_PER_MINUTE = 60
+"""
+How fast a Sheets service asks by default.
+
+Google's own per-user limit on the Sheets API — 60 read requests per minute,
+and separately 60 writes — and the reason this service is paced when Drive and
+Gmail are not: theirs are in the thousands, this one is reachable by a single
+loop over a workbook's tabs. Raise it to match a raised quota, or pass `None`
+to let requests through as fast as they are made.
+"""
+
+
 class SheetsService:
     @staticmethod
     def build(
         credentials: Credentials,
         google: GoogleServices,
         num_retries: int = DEFAULT_NUM_RETRIES,
+        requests_per_minute: int | None = DEFAULT_REQUESTS_PER_MINUTE,
     ) -> SheetsService:
         """
         Builds a Sheets v4 service on [credentials].
 
         Every request it issues retries transient failures up to [num_retries]
-        times — see `RetryingHttpRequest`.
+        times — see `RetryingHttpRequest` — and waits its turn so that no more
+        than [requests_per_minute] start in any minute. The two are
+        complementary: pacing keeps the service inside the quota, retrying
+        covers the failures that happen anyway.
         """
+        limiter = (
+            RateLimiter(requests_per_minute)
+            if requests_per_minute is not None
+            else None
+        )
         resource = build(
             "sheets",
             "v4",
             credentials=credentials,
             model=OrjsonModel(),
-            requestBuilder=RetryingHttpRequest.builder(num_retries),
+            requestBuilder=RetryingHttpRequest.builder(num_retries, limiter),
         )
         return SheetsService(resource, google)
 

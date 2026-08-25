@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from googleapiclient.discovery import build  # type: ignore
 
 from gservices.json_model import OrjsonModel
+from gservices.rate_limiter import RateLimiter
 from gservices.retrying_http_request import DEFAULT_NUM_RETRIES, RetryingHttpRequest
 
 if TYPE_CHECKING:
@@ -21,20 +22,33 @@ class GmailService:
 
     @staticmethod
     def build(
-        credentials: Credentials, num_retries: int = DEFAULT_NUM_RETRIES
+        credentials: Credentials,
+        num_retries: int = DEFAULT_NUM_RETRIES,
+        requests_per_minute: int | None = None,
     ) -> GmailService:
         """
         Builds a Gmail v1 service on [credentials].
 
         Every request it issues retries transient failures up to [num_retries]
         times — see `RetryingHttpRequest`.
+
+        [requests_per_minute] paces those requests, and defaults to `None` — no
+        pacing. Gmail's per-user quota is in the thousands per minute, far
+        above anything this wrapper generates on its own; set it if you are
+        driving the service hard enough to feel the limit, or share the budget
+        with something else.
         """
+        limiter = (
+            RateLimiter(requests_per_minute)
+            if requests_per_minute is not None
+            else None
+        )
         resource = build(
             "gmail",
             "v1",
             credentials=credentials,
             model=OrjsonModel(),
-            requestBuilder=RetryingHttpRequest.builder(num_retries),
+            requestBuilder=RetryingHttpRequest.builder(num_retries, limiter),
         )
         return GmailService(resource)
 

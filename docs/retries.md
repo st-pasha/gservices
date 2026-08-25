@@ -81,8 +81,9 @@ logging.getLogger("googleapiclient.http").setLevel(logging.WARNING)
   through the service) do not pick this up — they take their own
   `num_retries` argument.
 - **Quotas are not capacity.** Retrying a `429` rides out a burst; it will not
-  get you through a quota that is simply too small. If retries fire constantly,
-  slow the caller down or raise the quota.
+  get you through a quota that is simply too small. Slowing the caller down is
+  a separate mechanism — see [rate-limiting.md](rate-limiting.md), which paces
+  Sheets requests by default for exactly this reason.
 
 ## Implementation
 

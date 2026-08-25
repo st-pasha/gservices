@@ -269,6 +269,20 @@ class Sheet:
     # Data access
     # ----------------------------------------------------------------------------------
 
+    def load(self) -> None:
+        """
+        Fetches the sheet's cell data now, if it has not been fetched already.
+
+        Everything here loads on demand, so this is never *required*. It exists
+        because the order in which a caller happens to touch a sheet decides how
+        many requests that costs: reaching for `rows` or `column_count` first
+        fetches the values, and reaching for a cell, format or row property
+        afterwards fetches the grid as well — two round trips for one sheet.
+        Loading up front collapses that to one, which matters when the caller is
+        walking many sheets against a per-minute quota.
+        """
+        self._load_data()
+
     @property
     def rows(self) -> Rows:
         return self._rows

@@ -13,7 +13,7 @@ from gservices.drive.drive_service import DriveService
 from gservices.gmail.gmail_service import GmailService
 from gservices.oauth2_scopes import OAuth2Scope
 from gservices.retrying_http_request import DEFAULT_NUM_RETRIES
-from gservices.sheets.sheets_service import SheetsService
+from gservices.sheets.sheets_service import DEFAULT_REQUESTS_PER_MINUTE, SheetsService
 
 
 class GoogleServices:
@@ -22,6 +22,7 @@ class GoogleServices:
         credentials: Credentials,
         token_updated: bool = False,
         num_retries: int = DEFAULT_NUM_RETRIES,
+        sheets_requests_per_minute: int | None = DEFAULT_REQUESTS_PER_MINUTE,
     ):
         """
         Wraps [credentials] as the entry point to the Drive / Gmail / Sheets
@@ -32,6 +33,15 @@ class GoogleServices:
         to [num_retries] times with exponential backoff. Pass `num_retries=0`
         to disable that and have every failure surface immediately. See
         `RetryingHttpRequest` for what counts as transient.
+
+        Sheets requests are additionally *paced* to
+        [sheets_requests_per_minute], because the Sheets quota is low enough
+        (60 per minute per user) that an ordinary loop over a workbook's tabs
+        walks straight into it, and retrying cannot rescue a caller who is
+        simply asking for more than they are allowed. Raise it to match a
+        raised quota, or pass `None` to send requests as fast as they are made.
+        Drive and Gmail are unpaced; build those services directly if you need
+        to pace them too.
         """
         self._credentials = credentials
         self._drive_service: DriveService | None = None
@@ -39,6 +49,7 @@ class GoogleServices:
         self._sheets_service: SheetsService | None = None
         self._token_updated = token_updated
         self._num_retries = num_retries
+        self._sheets_requests_per_minute = sheets_requests_per_minute
 
     @staticmethod
     def connect(
@@ -47,6 +58,7 @@ class GoogleServices:
         scopes: Sequence[OAuth2Scope] | None = None,
         log: _Logger | None = None,
         num_retries: int = DEFAULT_NUM_RETRIES,
+        sheets_requests_per_minute: int | None = DEFAULT_REQUESTS_PER_MINUTE,
     ) -> GoogleServices:
         """
         Initialize Google API Service, using an existing [token] or obtaining
@@ -71,8 +83,8 @@ class GoogleServices:
         credentials data will be used to request an access token; consequently
         this parameter may be omitted if a valid [token] is supplied.
 
-        The [num_retries] parameter controls how many times a transient API
-        failure is retried; see `GoogleServices.__init__`.
+        The [num_retries] and [sheets_requests_per_minute] parameters control
+        retrying and pacing; see `GoogleServices.__init__`.
         """
         creds: UserCredentials | None = None
         token_updated = False
@@ -116,7 +128,9 @@ class GoogleServices:
             token.update(json.loads(creds.to_json()))
             token_updated = True
 
-        return GoogleServices(creds, token_updated, num_retries)
+        return GoogleServices(
+            creds, token_updated, num_retries, sheets_requests_per_minute
+        )
 
     @staticmethod
     def from_service_account_file(
@@ -124,6 +138,7 @@ class GoogleServices:
         scopes: Sequence[OAuth2Scope],
         subject: str | None = None,
         num_retries: int = DEFAULT_NUM_RETRIES,
+        sheets_requests_per_minute: int | None = DEFAULT_REQUESTS_PER_MINUTE,
     ) -> GoogleServices:
         """
         Initialize Google API Service using a service account key file.
@@ -137,15 +152,19 @@ class GoogleServices:
         the service account must be authorized for delegation, and [subject]
         must be a user in the workspace.
 
-        The [num_retries] parameter controls how many times a transient API
-        failure is retried; see `GoogleServices.__init__`.
+        The [num_retries] and [sheets_requests_per_minute] parameters control
+        retrying and pacing; see `GoogleServices.__init__`.
         """
         creds = ServiceAccountCredentials.from_service_account_file(
             str(filename), scopes=list(scopes)
         )
         if subject:
             creds = creds.with_subject(subject)
-        return GoogleServices(creds, num_retries=num_retries)
+        return GoogleServices(
+            creds,
+            num_retries=num_retries,
+            sheets_requests_per_minute=sheets_requests_per_minute,
+        )
 
     @staticmethod
     def from_service_account_info(
@@ -153,6 +172,7 @@ class GoogleServices:
         scopes: Sequence[OAuth2Scope],
         subject: str | None = None,
         num_retries: int = DEFAULT_NUM_RETRIES,
+        sheets_requests_per_minute: int | None = DEFAULT_REQUESTS_PER_MINUTE,
     ) -> GoogleServices:
         """
         Initialize Google API Service using a service account key dict.
@@ -166,11 +186,17 @@ class GoogleServices:
         )
         if subject:
             creds = creds.with_subject(subject)
-        return GoogleServices(creds, num_retries=num_retries)
+        return GoogleServices(
+            creds,
+            num_retries=num_retries,
+            sheets_requests_per_minute=sheets_requests_per_minute,
+        )
 
     @staticmethod
     def from_file(
-        file_name: str | pathlib.Path, num_retries: int = DEFAULT_NUM_RETRIES
+        file_name: str | pathlib.Path,
+        num_retries: int = DEFAULT_NUM_RETRIES,
+        sheets_requests_per_minute: int | None = DEFAULT_REQUESTS_PER_MINUTE,
     ) -> GoogleServices:
         data = json.loads(pathlib.Path(file_name).read_text())
         if "credentials" not in data:
@@ -182,6 +208,7 @@ class GoogleServices:
             token=token,
             scopes=data.get("scopes", []),
             num_retries=num_retries,
+            sheets_requests_per_minute=sheets_requests_per_minute,
         )
         if google.token_updated:
             data["token"] = token
@@ -208,7 +235,10 @@ class GoogleServices:
     def Sheets(self) -> SheetsService:
         if self._sheets_service is None:
             self._sheets_service = SheetsService.build(
-                self._credentials, self, self._num_retries
+                self._credentials,
+                self,
+                self._num_retries,
+                self._sheets_requests_per_minute,
             )
         return self._sheets_service
 

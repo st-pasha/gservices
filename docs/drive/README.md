@@ -87,6 +87,8 @@ the tree — not a server-side concept. See [paths.md](paths.md).
   become stale, duplicate names, escape hatches
 - [**../retries.md**](../retries.md) — how transient API failures (`503`, `429`,
   dropped sockets) are retried, and how to tune or disable that
+- [**../rate-limiting.md**](../rate-limiting.md) — how requests are paced to stay
+  inside Google's per-minute quotas, and how to tune or disable that
 
 ## Feature coverage
 

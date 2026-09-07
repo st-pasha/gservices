@@ -50,15 +50,32 @@ class Dimension:
 
     @property
     def _properties(self) -> gs.DimensionProperties:
+        """
+        This dimension's entry in the grid's `rowMetadata`/`columnMetadata`.
+
+        **Materialised, not returned by value.** The API omits the list
+        entirely for an axis whose dimensions carry no properties, and omits
+        trailing entries for the ones that do not — the ordinary shape for a
+        plain row. This used to answer `{}` for those, a throwaway that was not
+        part of the model: anything written through it — `hidden`, a
+        `pixelSize`, a developer-metadata entry — was queued for the server and
+        then vanished locally, so a snapshot taken after the write did not
+        contain what had just been written. Padding the list up to the index
+        costs the snapshot nothing, since an entry holding no properties
+        serialises to nothing.
+        """
         self._sheet._load_data()
         grid_data = self._sheet._cell_data
         assert grid_data is not None
-        # TypedDict.get with a dynamic key (the class constant) doesn't narrow
-        # cleanly — cast and read it as a plain dict for this one lookup.
-        meta_list = cast(dict[str, Any], grid_data).get(self._METADATA_KEY)
-        if meta_list and self._index < len(meta_list):
-            return meta_list[self._index]
-        return {}
+        # TypedDict.setdefault with a dynamic key (the class constant) doesn't
+        # narrow cleanly — cast and treat it as a plain dict for this lookup.
+        meta_list = cast(
+            list["gs.DimensionProperties"],
+            cast(dict[str, Any], grid_data).setdefault(self._METADATA_KEY, []),
+        )
+        while len(meta_list) <= self._index:
+            meta_list.append({})
+        return meta_list[self._index]
 
     def _set_property(self, property: str, value: Any) -> None:
         update_properties: gs.DimensionProperties = {}

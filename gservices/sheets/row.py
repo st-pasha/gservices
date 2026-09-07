@@ -34,7 +34,7 @@ class Row(Dimension):
     @property
     def metadata(self) -> RowDeveloperMetadata:
         if self._metadata is None:
-            data = self._properties.get("developerMetadata", [])
+            data = self._properties.setdefault("developerMetadata", [])
             self._metadata = RowDeveloperMetadata(data, self)
         return self._metadata
 

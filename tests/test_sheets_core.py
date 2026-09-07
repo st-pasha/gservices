@@ -303,6 +303,78 @@ class TestRowInsertedCacheFreshness:
 
 
 # ----------------------------------------------------------------------------
+# Dimension._properties — materialising the grid entry
+# ----------------------------------------------------------------------------
+
+class TestDimensionPropertiesAreMaterialised:
+    """`_properties` answered `{}` for a dimension the API had not described —
+    the ordinary shape for a plain row, since `rowMetadata` is omitted for rows
+    carrying no properties at all. Everything written through it went to the
+    server and vanished locally, so a snapshot taken after the write did not
+    contain what had just been written."""
+
+    def test_metadata_on_a_row_the_api_never_described(self):
+        data = _sheet_data(row_data=[_row("a"), _row("b")])  # no rowMetadata
+        sheet = _make_spreadsheet(data).sheets[0]
+
+        sheet.rows[1].metadata.add("fb_row_id", "uuid-1")
+
+        assert sheet._cell_data is not None
+        row_meta = cast(list[dict[str, Any]], sheet._cell_data["rowMetadata"])
+        assert row_meta[0] == {}
+        assert row_meta[1]["developerMetadata"][0]["metadataKey"] == "fb_row_id"
+        assert row_meta[1]["developerMetadata"][0]["metadataValue"] == "uuid-1"
+
+    def test_metadata_on_a_row_past_the_described_ones(self):
+        # The API stops the list at the last row that has properties.
+        data = _sheet_data(
+            row_data=[_row("a"), _row("b"), _row("c")],
+            row_meta=[{"pixelSize": 30}],
+        )
+        sheet = _make_spreadsheet(data).sheets[0]
+
+        sheet.rows[2].metadata.add("fb_row_id", "uuid-2")
+
+        assert sheet._cell_data is not None
+        row_meta = cast(list[dict[str, Any]], sheet._cell_data["rowMetadata"])
+        assert len(row_meta) == 3
+        assert row_meta[0] == {"pixelSize": 30}  # untouched
+        assert row_meta[2]["developerMetadata"][0]["metadataValue"] == "uuid-2"
+
+    def test_metadata_on_a_column_the_api_never_described(self):
+        data = _sheet_data(row_data=[_row("a", "b")])  # no columnMetadata
+        sheet = _make_spreadsheet(data).sheets[0]
+
+        sheet.columns[1].metadata.add("k", "v")
+
+        assert sheet._cell_data is not None
+        col_meta = cast(list[dict[str, Any]], sheet._cell_data["columnMetadata"])
+        assert col_meta[1]["developerMetadata"][0]["metadataKey"] == "k"
+
+    def test_a_property_set_on_a_bare_row_reads_back(self):
+        data = _sheet_data(row_data=[_row("a")])
+        sheet = _make_spreadsheet(data).sheets[0]
+
+        sheet.rows[0].hidden = True
+
+        assert sheet.rows[0].hidden is True
+        assert sheet._cell_data is not None
+        row_meta = cast(list[dict[str, Any]], sheet._cell_data["rowMetadata"])
+        assert row_meta[0]["hiddenByUser"] is True
+
+    def test_reading_a_bare_row_adds_nothing_to_the_snapshot(self):
+        # Materialising pads the list with empty entries. An entry holding no
+        # properties must serialise to nothing, or merely *looking* at a row
+        # would change what a snapshot says.
+        data = _sheet_data(row_data=[_row("a"), _row("b")])
+        before = _make_spreadsheet(data).snapshot()
+
+        ss = _make_spreadsheet(data)
+        _ = ss.sheets[0].rows[1].metadata  # read, write nothing
+        assert ss.snapshot() == before
+
+
+# ----------------------------------------------------------------------------
 # Columns.__getitem__ — caching
 # ----------------------------------------------------------------------------
 

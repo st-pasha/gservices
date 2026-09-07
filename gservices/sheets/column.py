@@ -29,7 +29,7 @@ class Column(Dimension):
     @property
     def metadata(self) -> ColumnDeveloperMetadata:
         if self._metadata is None:
-            data = self._properties.get("developerMetadata", [])
+            data = self._properties.setdefault("developerMetadata", [])
             self._metadata = ColumnDeveloperMetadata(data, self)
         return self._metadata
 

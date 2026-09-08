@@ -144,6 +144,13 @@ The range strings the layer emits:
 - Full row: `5:5`
 - Union: `A1:B3,C5,D:D`
 
+"Full" is relative to the data extent of the snapshot, not to the sheet's
+declared grid: `5:5` means every column the snapshot has data in, and `B:B`
+every row. A reader that resolves these back to cells needs the extent — the
+`data` layer's shape — and a reader that only understands `A1:C5` will silently
+skip them. Both forms become more common the narrower the reading is, so code
+that parses ranges should handle all five.
+
 Same compaction is used for `formulas` (one A1 range list marking which
 data entries are formulas). For a typical column of identical-shape
 formulas, this collapses to one entry like `"B2:B100"` — diffs stay

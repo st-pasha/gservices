@@ -61,6 +61,7 @@ class SheetsService:
         spreadsheet_id: str,
         load: bool = False,
         track_version: bool = False,
+        extent: GridExtent = "grid",
     ) -> Spreadsheet:
         """
         Loads the spreadsheet with ID [spreadsheet_id].
@@ -69,19 +70,36 @@ class SheetsService:
         be loaded. When the parameter is False (default), only the sheet names and
         their basic properties are loaded. The data can be loaded later on-demand.
 
+        [extent] decides how much of a sheet every later grid fetch asks for —
+        the whole declared grid, or only the part of it holding data. It is
+        worth setting to `"data"` for anything but small documents; see
+        `Spreadsheet.extent` for what that trades away.
+
         If [track_version] is True, the Drive file version is captured as a
         baseline so subsequent `save(check_version=True)` calls can detect
         concurrent edits by other users. Costs one extra Drive API call at
         open time.
         """
+        # `includeGridData` is the API's own switch and knows nothing about
+        # `extent`, so an eager load goes through the extent-aware path rather
+        # than being asked for here.
         data = (
             self._resource.spreadsheets()
-            .get(spreadsheetId=spreadsheet_id, includeGridData=load)
+            .get(
+                spreadsheetId=spreadsheet_id,
+                includeGridData=load and extent == "grid",
+            )
             .execute()
         )
-        spreadsheet = Spreadsheet(data, self)
+        spreadsheet = Spreadsheet(data, self, extent=extent)
         if track_version:
             spreadsheet._baseline_version = spreadsheet._fetch_drive_version()
+        if load and extent != "grid":
+            # `include_computed` so that an eager load means the same thing in
+            # both modes: `includeGridData=True` carries formula results, and a
+            # `cell.value` that reads `None` only under one extent would be a
+            # trap rather than a trade.
+            spreadsheet._load_all_data(include_computed=True)
         return spreadsheet
 
     # ----------------------------------------------------------------------------------
@@ -104,4 +122,4 @@ class SheetsService:
         return self._resource
 
 
-from gservices.sheets.spreadsheet import Spreadsheet
+from gservices.sheets.spreadsheet import GridExtent, Spreadsheet

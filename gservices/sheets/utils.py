@@ -27,6 +27,19 @@ def coords_to_address(row: int, col: int) -> str:
     return addr
 
 
+def quote_sheet_title(title: str) -> str:
+    """
+    A sheet title as an A1 range refers to it: `Sheet1` -> `'Sheet1'`.
+
+    Always quoted, never conditionally: a title may be a number, may collide
+    with a cell address (`A1`), and may hold spaces, and the quoted form is
+    correct for all of them. An apostrophe inside the title is doubled, which
+    is how A1 notation escapes it — leaving it alone silently changes which
+    range the caller asked for.
+    """
+    return "'" + title.replace("'", "''") + "'"
+
+
 def address_to_coords(addr: str) -> tuple[int, int]:
     """
     Converts the address of a cell from excel notation to a row/column pair,

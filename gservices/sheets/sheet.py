@@ -377,11 +377,16 @@ class Sheet:
     def _load_data(self) -> None:
         if self._cell_data is not None:
             return
+        if self._spreadsheet.extent != "grid":
+            # Bounding a fetch means first asking where this sheet's data ends,
+            # which the spreadsheet already knows how to do for a set of sheets.
+            self._spreadsheet._load_all_data(only_sheets=[self])
+            return
         data = (
             self._spreadsheet._service.resource.spreadsheets()
             .get(
                 spreadsheetId=self._spreadsheet.id,
-                ranges=f"'{self.title}'",
+                ranges=quote_sheet_title(self.title),
                 includeGridData=True,
             )
             .execute()
@@ -405,12 +410,15 @@ class Sheet:
         data = (
             self._spreadsheet._service.resource.spreadsheets()
             .values()
-            .get(spreadsheetId=self._spreadsheet.id, range=f"'{self.title}'")
+            .get(
+                spreadsheetId=self._spreadsheet.id,
+                range=quote_sheet_title(self.title),
+            )
             .execute()
         )
         assert data.get("majorDimension") == "ROWS"
         values = cast(list[list[str]], data.get("values", []))
-        n_cols = max(len(row) for row in values)
+        n_cols = max((len(row) for row in values), default=0)
         for row in values:
             if len(row) < n_cols:
                 row += [""] * (n_cols - len(row))
@@ -425,7 +433,7 @@ class Sheet:
                 cell_data.get("formattedValue", "")
                 for cell_data in row.get("values", [])
             ])
-        n_cols = max(len(row) for row in self._cell_values)
+        n_cols = max((len(row) for row in self._cell_values), default=0)
         for row in self._cell_values:
             if len(row) < n_cols:
                 row += [""] * (n_cols - len(row))
@@ -595,5 +603,6 @@ from gservices.sheets.utils import (
     array_move,
     color_object_to_string,
     color_string_to_object,
+    quote_sheet_title,
     set_dotted_property,
 )

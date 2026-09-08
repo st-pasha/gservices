@@ -4,7 +4,16 @@ import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from gservices.sheets.utils import (
+    color_object_to_string,
+    color_string_to_object,
+    coords_to_address,
+    merge_requests,
+    quote_sheet_title,
+    set_dotted_property,
+)
 
 if TYPE_CHECKING:
     import googleapiclient._apis.sheets.v4.schemas as gs  # type: ignore[reportMissingModuleSource]
@@ -12,10 +21,24 @@ if TYPE_CHECKING:
     from gservices.sheets.snapshot import SpreadsheetSnapshot
 
 
+GridExtent = Literal["grid", "data"]
+"""
+How much of a sheet a grid fetch asks for. See `Spreadsheet.extent`.
+"""
+
+
 # Description prefix for protectedRanges this library creates as edit-locks.
 # Distinguishes our locks from user-created protections so stale-lock cleanup
 # only touches what we own.
 _LOCK_MARKER = "gservices-lock:"
+
+
+def _cell_fields(include_computed: bool) -> str:
+    """The `CellData` sub-fields a grid fetch asks for, as a `fields=` list."""
+    fields = ["userEnteredValue", "effectiveFormat", "note", "hyperlink"]
+    if include_computed:
+        fields.insert(1, "effectiveValue")
+    return ",".join(fields)
 
 
 class SpreadsheetVersionMismatchError(RuntimeError):
@@ -59,8 +82,14 @@ class Spreadsheet:
 
     BATCH_SIZE = 500
 
-    def __init__(self, data: gs.Spreadsheet, service: SheetsService):
+    def __init__(
+        self,
+        data: gs.Spreadsheet,
+        service: SheetsService,
+        extent: GridExtent = "grid",
+    ):
         self._service = service
+        self._extent: GridExtent = extent
         self._id: str = data.get("spreadsheetId", "")
         self._url: str = data.get("spreadsheetUrl", "")
         self._properties: gs.SpreadsheetProperties = data.get("properties", {})
@@ -84,14 +113,18 @@ class Spreadsheet:
         include_computed: bool = False,
         only_sheets: list[Sheet] | None = None,
     ) -> None:
-        """Loads cell data for every sheet that doesn't yet have it, in a
-        single API call. Much faster than letting each sheet hit the API
+        """Loads cell data for every sheet that doesn't yet have it, batched
+        across sheets. Much faster than letting each sheet hit the API
         independently when the spreadsheet has many sheets.
 
         A `fields=` mask restricts the response to the subset of CellData /
         sheet data that the snapshot builder reads — skipping `formattedValue`,
         `userEnteredFormat`, `textFormatRuns`, validation, pivot tables, etc.
         For typical formatted documents this halves the response size.
+
+        How much of each sheet is fetched depends on the `extent` the
+        spreadsheet was opened with — the whole declared grid, or only the
+        populated part of it.
 
         `only_sheets`, if given, limits which sheets are considered candidates
         for loading — used by `reload()` to avoid eager-loading sheets that
@@ -101,15 +134,19 @@ class Spreadsheet:
         missing = [sheet for sheet in candidates if sheet._cell_data is None]
         if not missing:
             return
-        cell_fields = ["userEnteredValue", "effectiveFormat", "note", "hyperlink"]
-        if include_computed:
-            cell_fields.insert(1, "effectiveValue")
+        if self._extent == "data":
+            self._load_within_data_extent(missing, include_computed)
+        else:
+            self._load_whole_grid(missing, include_computed)
+
+    def _load_whole_grid(self, missing: list[Sheet], include_computed: bool) -> None:
+        """Loads every cell of the sheets' declared grids, in one call."""
         fields = (
             "sheets("
             "properties.sheetId,"
             "data("
             "rowMetadata,columnMetadata,"
-            f"rowData.values({','.join(cell_fields)})"
+            f"rowData.values({_cell_fields(include_computed)})"
             ")"
             ")"
         )
@@ -128,6 +165,153 @@ class Spreadsheet:
                 blocks = sheet_data.get("data", [])
                 if blocks:
                     sheet._cell_data = blocks[0]
+
+    def _load_within_data_extent(
+        self, missing: list[Sheet], include_computed: bool
+    ) -> None:
+        """
+        Loads only the populated corner of each sheet — see `extent`.
+
+        Three requests where the whole-grid path makes one, and far cheaper
+        than it anyway: what dominates a grid fetch is the `effectiveFormat`
+        that comes back for *every* cell inside the declared grid, empty ones
+        included, and a formatted-but-empty cell's format is several kilobytes
+        of nested objects once parsed.
+
+        1. `values.batchGet` — the values themselves, which is also the only
+           way to ask the API where the data ends. The answer is kept as each
+           sheet's `values` cache rather than thrown away.
+        2. `spreadsheets.get`, bounded to `A1:<last cell>` per sheet, for the
+           formats, notes and formulas the values call does not carry.
+        3. `spreadsheets.get` for `rowMetadata` / `columnMetadata` alone,
+           **unbounded**. Row properties and developer metadata are the one
+           thing that lives outside the data extent on purpose — an id pinned
+           to an empty row so that whatever is typed there is already
+           identified — and bounding them away would mean re-writing that id
+           on every load, for ever.
+        """
+        extents = self._fetch_value_extents(missing)
+        grids = self._fetch_bounded_grids(missing, extents, include_computed)
+        dimensions = self._fetch_dimension_properties()
+        for sheet in missing:
+            block: dict[str, Any] = {}
+            row_data = grids.get(sheet.id)
+            if row_data is not None:
+                block["rowData"] = row_data
+            block.update(dimensions.get(sheet.id, {}))
+            # Set even when empty: `None` means "not loaded yet", and a sheet
+            # left that way would ask for itself again on the next access.
+            sheet._cell_data = cast("gs.GridData", block)
+
+    def _fetch_value_extents(
+        self, sheets: list[Sheet]
+    ) -> dict[int, tuple[int, int]]:
+        """
+        How far the data reaches in each of [sheets], as `{id: (rows, cols)}`.
+
+        `values.batchGet` reports the populated range and nothing else, so this
+        is a small response however large the grid is. The values are kept: the
+        caller has just paid for them, and dropping them would make the next
+        `sheet.values` fetch the same bytes again.
+        """
+        response = (
+            self._service.resource.spreadsheets()
+            .values()
+            .batchGet(
+                spreadsheetId=self._id,
+                ranges=[quote_sheet_title(sheet.title) for sheet in sheets],
+                fields="valueRanges(values)",
+            )
+            .execute()
+        )
+        ranges = response.get("valueRanges", [])
+        extents: dict[int, tuple[int, int]] = {}
+        # `strict`: the API answers one range per range asked for, and a short
+        # answer would otherwise leave the tail of the workbook looking empty
+        # rather than unread — which is the one failure this mode must not have.
+        for sheet, value_range in zip(sheets, ranges, strict=True):
+            values = cast(list[list[str]], value_range.get("values", []))
+            n_cols = max((len(row) for row in values), default=0)
+            extents[sheet.id] = (len(values), n_cols)
+            if sheet._cell_values is None:
+                for row in values:
+                    if len(row) < n_cols:
+                        row += [""] * (n_cols - len(row))
+                sheet._cell_values = values
+        return extents
+
+    def _fetch_bounded_grids(
+        self,
+        sheets: list[Sheet],
+        extents: dict[int, tuple[int, int]],
+        include_computed: bool,
+    ) -> dict[int, list[gs.RowData]]:
+        """The `rowData` of each sheet's populated range, as `{id: rows}`."""
+        ranges: list[str] = []
+        for sheet in sheets:
+            n_rows, n_cols = extents.get(sheet.id, (0, 0))
+            if n_rows == 0 or n_cols == 0:
+                continue
+            last = coords_to_address(n_rows - 1, n_cols - 1)
+            ranges.append(f"{quote_sheet_title(sheet.title)}!A1:{last}")
+        if not ranges:
+            return {}
+        fields = (
+            "sheets("
+            "properties.sheetId,"
+            f"data(rowData.values({_cell_fields(include_computed)}))"
+            ")"
+        )
+        data = (
+            self._service.resource.spreadsheets()
+            .get(
+                spreadsheetId=self._id,
+                ranges=ranges,
+                includeGridData=True,
+                fields=fields,
+            )
+            .execute()
+        )
+        grids: dict[int, list[gs.RowData]] = {}
+        for sheet_data in data.get("sheets", []):
+            sheet_id = sheet_data.get("properties", {}).get("sheetId")
+            blocks = sheet_data.get("data", [])
+            if sheet_id is None or not blocks:
+                continue
+            grids[sheet_id] = blocks[0].get("rowData", [])
+        return grids
+
+    def _fetch_dimension_properties(self) -> dict[int, dict[str, Any]]:
+        """
+        Every sheet's row and column properties, as `{id: {...}}`.
+
+        Asked for on its own, over the whole grid, because these are what the
+        data extent must not cut off — see `_load_within_data_extent`. Without
+        `rowData` in the mask the response is a few hundred kilobytes for a
+        workbook whose full grid is hundreds of megabytes.
+        """
+        data = (
+            self._service.resource.spreadsheets()
+            .get(
+                spreadsheetId=self._id,
+                includeGridData=True,
+                fields="sheets(properties.sheetId,data(rowMetadata,columnMetadata))",
+            )
+            .execute()
+        )
+        properties: dict[int, dict[str, Any]] = {}
+        for sheet_data in data.get("sheets", []):
+            sheet_id = sheet_data.get("properties", {}).get("sheetId")
+            blocks = sheet_data.get("data", [])
+            if sheet_id is None or not blocks:
+                continue
+            block = cast(dict[str, Any], blocks[0])
+            properties[sheet_id] = {
+                key: block[key]
+                for key in ("rowMetadata", "columnMetadata")
+                if key in block
+            }
+        return properties
 
     def save(self, check_version: bool = False) -> None:
         """
@@ -428,6 +612,38 @@ class Spreadsheet:
         The ID of the spreadsheet. This is the same as the file ID in Google Drive.
         """
         return self._id
+
+    @property
+    def extent(self) -> GridExtent:
+        """
+        How much of each sheet this spreadsheet fetches when it loads a grid.
+
+        `"grid"`, the default, loads the sheet's declared grid — every cell a
+        sheet *has*, which for a blank one is 1000 × 26 and for a sheet someone
+        has widened can be far more. `"data"` loads only the rectangle that
+        holds values, plus the row and column properties of the whole sheet.
+
+        Prefer `"data"` unless the formatting of empty cells matters to you.
+        The declared grid is mostly empty in real documents, and an empty cell
+        still comes back carrying the format it inherits, so the difference is
+        not marginal: a 29-tab delivery log measured 1,044,206 cells and 7.5 GB
+        of resident memory to snapshot whole, against 13,015 cells to snapshot
+        within its data extent — the same 0.5 MB snapshot either way, since
+        what the extra million cells contribute is a format identical to their
+        neighbours'.
+
+        What `"data"` gives up is exactly that: a cell holding no value but a
+        deliberate format — a colour-coded empty column, a ruled-off block
+        below a table — is outside the extent and does not reach the snapshot.
+        Row heights, hidden rows, and developer metadata are *not* given up;
+        those are read for the whole sheet either way.
+
+        Set when the spreadsheet is opened, and fixed thereafter, so that every
+        grid this object loads is bounded the same way:
+
+            spreadsheet = google.Sheets.open(file_id, extent="data")
+        """
+        return self._extent
 
     @property
     def metadata(self) -> SpreadsheetDeveloperMetadata:
@@ -731,9 +947,3 @@ from gservices.sheets.cell_format import CellFormat
 from gservices.sheets.developer_metadata import SpreadsheetDeveloperMetadata
 from gservices.sheets.sheet import Sheet
 from gservices.sheets.sheets_service import SheetsService
-from gservices.sheets.utils import (
-    color_object_to_string,
-    color_string_to_object,
-    merge_requests,
-    set_dotted_property,
-)

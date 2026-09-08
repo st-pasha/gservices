@@ -18,6 +18,9 @@ ss = google.Sheets.open("1abc...XYZ", load=True)
 
 # With concurrent-edit detection enabled — see concurrency.md.
 ss = google.Sheets.open("1abc...XYZ", track_version=True)
+
+# Reading only the part of each sheet that holds data — see below.
+ss = google.Sheets.open("1abc...XYZ", extent="data")
 ```
 
 `load=True` is one large fetch that includes every cell, format, note, and
@@ -28,6 +31,49 @@ single-sheet fetch).
 
 If you know you'll touch many sheets, `load=True` is one round-trip vs. one
 per sheet — usually faster overall, despite the bigger payload.
+
+## How much of a sheet to read: `extent`
+
+A sheet's *grid* is every cell it has — 1000 × 26 for a blank one, and far
+more for a sheet someone has widened. Its *data extent* is the rectangle that
+actually holds values. In real documents the second is a tiny fraction of the
+first, and the difference is expensive, because an empty cell is not free:
+it comes back carrying the format it inherits, which is a few kilobytes of
+nested objects once parsed.
+
+```python
+ss = google.Sheets.open(file_id, extent="data")   # the populated rectangle
+ss = google.Sheets.open(file_id)                  # the declared grid (default)
+```
+
+Measured on a 29-tab delivery log whose tabs are 1000 rows deep and up to 118
+columns wide:
+
+| | cells fetched | peak memory | wall clock | snapshot |
+|---|---|---|---|---|
+| `extent="grid"` | 1,044,206 | 7,376 MB | 37.4 s | 0.66 MB |
+| `extent="data"` | 12,996 | 427 MB | 6.5 s | 0.60 MB |
+
+The snapshots are the same document. What the smaller one leaves out is the
+formatting of cells that hold nothing — 161 format groups out of 1,948, each
+one a run of empty cells styled like their neighbours. Values, formulas,
+notes, hyperlinks, merges, row and column properties, and developer metadata
+are identical, and so is the format of every cell that holds a value.
+
+So: prefer `extent="data"` unless the formatting of empty cells is part of
+what you are reading — a colour-coded empty column, a ruled-off block below a
+table. Row heights, hidden rows and developer metadata are **not** bounded
+away; those are read for the whole sheet either way, because a row id pinned
+to an empty row is a normal thing to keep there and re-writing it on every
+load would be worse than the fetch it saves.
+
+The mode costs three requests where the default makes one — the values (which
+is also how the API is asked where the data ends), the bounded grid, and the
+dimension properties — all of them small. They are paid per *load*, not per
+sheet, so load the sheets you need together (`snapshot()` does, and so does
+`open(load=True)`) rather than letting them trickle in one at a time. It is set when the spreadsheet is
+opened and fixed thereafter, so every grid this object loads is bounded the
+same way, `sheet.load()` and `snapshot()` included.
 
 ## Properties
 

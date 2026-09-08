@@ -70,6 +70,12 @@ print(len(sheet.rows), sheet.cell(0, 0).value)
 That matters when walking many sheets against a per-minute quota — see
 [../rate-limiting.md](../rate-limiting.md).
 
+How much of the sheet that fetch asks for is decided once, when the
+spreadsheet is opened: the declared grid, or only the rectangle holding data.
+See [`extent`](spreadsheet.md#how-much-of-a-sheet-to-read-extent) — for a
+sheet with a wide, mostly-empty grid it is the difference between megabytes
+and gigabytes.
+
 ## Looking up cells
 
 ```python

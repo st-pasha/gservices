@@ -47,6 +47,7 @@ GoogleServices.Drive             →  DriveService           entry point
         .size, .created_time, .modified_time, .version
         .starred, .trashed, .explicitly_trashed
         .is_dir, .is_shortcut, .is_spreadsheet, .is_document, .is_shared_drive
+        .refresh()               re-read metadata (after an outside write)
         .rename(new_name)
         .move_to(dest_dir_path)
         .copy_to(dest_path)
@@ -104,7 +105,8 @@ the tree — not a server-side concept. See [paths.md](paths.md).
 - **File metadata** — id, name, MIME type, parents, size, created /
   modified time, version, starred, trashed
 - **File lifecycle** — `rename`, `move_to`, `copy_to`, `delete`
-  (trash or permanent); folders copy recursively
+  (trash or permanent), `refresh` (re-read after an outside write); folders
+  copy recursively
 - **Content I/O** — `Folder.upload` (bytes / text / local file),
   `File.download`, `File.update_content` for ordinary blob files; works in
   shared drives, integrates with the path/cache layer

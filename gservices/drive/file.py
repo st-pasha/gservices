@@ -19,7 +19,23 @@ Content = bytes | str | pathlib.Path
 
 
 class File:
-    FIELDS = "id,name,mimeType,parents,driveId,shortcutDetails,contentRestrictions"
+    FIELDS = (
+        "id,name,mimeType,parents,driveId,shortcutDetails,contentRestrictions,version"
+    )
+    """
+    The metadata every fetch in this module asks for, and therefore the set a
+    `File` can answer from without a round-trip of its own.
+
+    Adding a field here is **free per request** — Drive returns what the
+    `fields` mask asks for in the response it was already sending — and it saves
+    a `files.get` per file for anything that would otherwise fall through to
+    `_ensure_all_properties_loaded`. `version` is here for exactly that reason:
+    it is the cheapest "has this changed?" Drive offers, so a caller polling a
+    folder for changes was paying one extra request *per file* to read the one
+    number it came for. What does not belong here is anything a listing of a
+    thousand files should not be carrying — `permissions`, `owners`, the
+    thumbnail links — which is why this is a chosen list and not `*`.
+    """
 
     def __init__(self, data: g.File, drive: DriveService):
         self._data = data
@@ -108,6 +124,36 @@ class File:
             assert isinstance(parent, Folder)
             self._parent = parent
         return self._parent
+
+    @property
+    def version(self) -> int:
+        """
+        A monotonically increasing version number for the file.
+
+        Reflects every change made on the server, including ones not visible to
+        the user — a comment, a cursor parked in a cell, a metadata write. So it
+        over-reports change and never under-reports it, which is the right way
+        round for deciding whether to re-fetch something.
+
+        **Free**: it comes back with `FIELDS`, so a listing of a folder already
+        carries the version of every file in it. It was an extended property
+        until that was measured, and the cost was not small — reading the
+        version of seventy-eight listed files was seventy-eight `files.get`
+        calls, which is what a caller polling for changes paid every pass.
+
+        **As fresh as the fetch it arrived in**, which is the trade. A `File`
+        held across a write made elsewhere — through another API, or by a person
+        — reports the version it was listed at. Call `refresh` when the answer
+        has to be current as of *now* rather than as of the read.
+        """
+        if "version" not in self._data:
+            # A `File` built from a response that did not use `FIELDS`: the
+            # user drive (`files().get(fileId="root")`, default fields) and
+            # `SharedDrive` (a `drives().list()` entry, a different resource
+            # altogether). Both are folders nobody polls, so the fallback costs
+            # nothing in practice and keeps the property total.
+            self._ensure_all_properties_loaded()
+        return int(self._data.get("version", 0))
 
     @property
     def is_dir(self) -> bool:
@@ -199,16 +245,6 @@ class File:
         self._ensure_all_properties_loaded()
         return self._data.get("explicitlyTrashed", False)
 
-    @property
-    def version(self) -> int:
-        """
-        A monotonically increasing version number for the file. This reflects
-        every change made to the file on the server, even those not visible to
-        the user.
-        """
-        self._ensure_all_properties_loaded()
-        return int(self._data.get("version", 0))
-
     def _ensure_all_properties_loaded(self):
         if not self._loaded:
             new_data = (
@@ -222,6 +258,43 @@ class File:
     # ----------------------------------------------------------------------------------
     # Public methods
     # ----------------------------------------------------------------------------------
+
+    def refresh(self) -> None:
+        """
+        Re-read this file's metadata from Drive, discarding what was cached.
+
+        **For when "as of the last read" is not good enough.** A `File` is
+        cached by id for the life of a `DriveService`, and its metadata is as
+        old as the fetch it arrived in — so a file changed underneath you, by
+        another API or by a person, goes on reporting the name, parents and
+        `version` it had then. This is the way to ask again.
+
+        The case it was added for is a write made through a *different* service:
+        editing a spreadsheet through the Sheets API moves its Drive `version`,
+        and the `File` that was listed beforehand cannot know that. Reading
+        `version` after such a write means refreshing first.
+
+        One `files.get(fields="*")`, so the extended properties (`size`,
+        `modified_time`, ...) come back fresh in the same round-trip rather than
+        costing a second one later. Derived state is dropped and recomputed —
+        the file may have been renamed or moved since, so its path is re-derived
+        and the cache re-keyed under it.
+        """
+        res = (
+            self._drive.resource.files()
+            .get(fileId=self.id, fields="*", supportsAllDrives=True)
+            .execute()
+        )
+        # Uncached under the *old* path before anything is replaced: `uncache`
+        # reads `self.path`, and the point of refreshing may be that the path
+        # has changed. Same order `rename` uses, and for the same reason.
+        self._drive.uncache(self)
+        self._data = res
+        self._loaded = True
+        self._path = None
+        self._parent = None
+        self._shared_drive_id = None
+        self._drive.cache(self)
 
     def rename(self, new_name: str) -> None:
         res = (

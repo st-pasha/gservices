@@ -12,6 +12,7 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from gservices.drive.drive_service import DriveService
+from gservices.drive.file import File
 from gservices.drive.folder import Folder
 from gservices.drive.path import Path
 
@@ -1958,3 +1959,173 @@ class TestBrokenShortcutColoredRepr:
         # The colored broken repr wraps with the dim escape \033[2m.
         assert "\033[2m" in rep
         assert "✘" in rep
+
+
+# ----------------------------------------------------------------------------
+# A version is not worth a round-trip
+# ----------------------------------------------------------------------------
+
+
+class TestVersionComesWithTheListing:
+    """
+    `version` is in `FIELDS`, so reading it costs nothing.
+
+    It was an extended property, which made it look cheap and was not: a caller
+    polling a folder for changes read the version of every file it listed, and
+    each of those reads was a `files.get(fields="*")` of its own. Seventy-eight
+    files is seventy-eight extra requests to learn the one number the caller
+    came for — and `version` is the *cheapest* change signal Drive offers, so
+    that is precisely the wrong thing to charge per file for.
+    """
+
+    def _listed(self, version: int = 7) -> tuple[DriveService, MagicMock]:
+        return _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": "F", "name": "a.txt", "mimeType": "text/plain",
+                     "parents": ["USERDRIVE"], "version": str(version)},
+                ]},
+            ],
+        )
+
+    def test_the_field_mask_asks_for_it(self):
+        # Free per request: Drive returns what the mask asks for, in the
+        # response it was already sending.
+        assert "version" in File.FIELDS.split(",")
+
+    def test_reading_a_listed_file_s_version_costs_no_request(self):
+        drive, resource = self._listed(version=7)
+        file = drive.get("~/a.txt")
+        before = resource.files.return_value.get.call_count
+
+        assert file.version == 7
+        assert resource.files.return_value.get.call_count == before
+
+    def test_a_whole_folder_s_versions_cost_one_listing(self):
+        # The shape that was expensive: list, then ask each file what version
+        # it is at. It is now the listing and nothing else.
+        drive, resource = _make_drive(
+            files_list_pages=[
+                {"files": [
+                    {"id": f"F{n}", "name": f"f{n}.txt", "mimeType": "text/plain",
+                     "parents": ["USERDRIVE"], "version": str(n)}
+                    for n in range(1, 21)
+                ]},
+            ],
+        )
+        before = resource.files.return_value.get.call_count
+
+        # Sorted by name, so `f10` sits between `f1` and `f2` — the point is
+        # the count, not the order.
+        assert sorted(f.version for f in drive.ls("~")) == list(range(1, 21))
+        assert resource.files.return_value.get.call_count == before
+
+    def test_a_file_fetched_by_id_carries_its_version_too(self):
+        drive, resource = _make_drive(files_get_by_id={
+            "F": {"id": "F", "name": "a.txt", "mimeType": "text/plain",
+                  "parents": ["USERDRIVE"], "version": "12"},
+        })
+        file = drive.get(id="F")
+        before = resource.files.return_value.get.call_count
+
+        assert file.version == 12
+        assert resource.files.return_value.get.call_count == before
+
+    def test_a_response_without_it_still_answers(self):
+        # The user drive comes from `files().get(fileId="root")` with no field
+        # mask, and a `SharedDrive` from `drives().list()` — a different
+        # resource with no `version` at all. Neither is a thing anybody polls,
+        # so falling through to the full fetch keeps the property total at no
+        # cost anyone will notice.
+        drive, resource = _make_drive()
+        root = drive.user_drive
+        resource.files.return_value.get.side_effect = None
+        resource.files.return_value.get.return_value.execute.return_value = (
+            USER_DRIVE | {"version": "3"}
+        )
+
+        assert root.version == 3
+
+    def test_it_is_as_fresh_as_the_fetch_it_arrived_in(self):
+        """
+        The trade, stated as a test so nobody has to discover it.
+
+        A listing is a point in time. The `File` it produced reports that
+        version until somebody asks Drive again — which is what `refresh` is
+        for, and what the lazy fetch used to do by accident on first access.
+        """
+        drive, _ = self._listed(version=7)
+        file = drive.get("~/a.txt")
+        assert file.version == 7
+        assert file.version == 7  # and it does not go and look
+
+
+class TestRefresh:
+    def _drive_with(self, *versions: int) -> tuple[DriveService, MagicMock, Any]:
+        """A cached file whose successive `fields="*"` fetches report [versions]."""
+        drive, resource = _make_drive(files_get_by_id={
+            "F": {"id": "F", "name": "a.txt", "mimeType": "text/plain",
+                  "parents": ["USERDRIVE"], "version": "1"},
+        })
+        file = drive.get(id="F")
+        fetches: list[MagicMock] = []
+        for version in versions:
+            fetch = MagicMock()
+            fetch.execute.return_value = {
+                "id": "F", "name": "a.txt", "mimeType": "text/plain",
+                "parents": ["USERDRIVE"], "version": str(version), "size": "3",
+            }
+            fetches.append(fetch)
+        resource.files.return_value.get.side_effect = fetches
+        return drive, resource, file
+
+    def test_it_reads_the_version_again(self):
+        # The case it exists for: something wrote to the file through another
+        # API — a spreadsheet edited through Sheets moves its Drive version —
+        # and the `File` listed beforehand cannot know that.
+        _drive, _resource, file = self._drive_with(9)
+        assert file.version == 1
+
+        file.refresh()
+        assert file.version == 9
+
+    def test_it_asks_for_everything_in_one_round_trip(self):
+        # `fields="*"`, so the extended properties are fresh in the same
+        # request rather than costing a second one on next access.
+        _drive, resource, file = self._drive_with(9)
+        file.refresh()
+
+        assert resource.files.return_value.get.call_args.kwargs["fields"] == "*"
+        before = resource.files.return_value.get.call_count
+        assert file.size == 3
+        assert resource.files.return_value.get.call_count == before
+
+    def test_a_renamed_file_is_re_cached_under_its_new_path(self):
+        drive, resource = _make_drive(files_get_by_id={
+            "F": {"id": "F", "name": "old.txt", "mimeType": "text/plain",
+                  "parents": ["USERDRIVE"], "version": "1"},
+        })
+        file = drive.get(id="F")
+        assert str(file.path) == "/My Drive/old.txt"
+
+        resource.files.return_value.get.side_effect = None
+        resource.files.return_value.get.return_value.execute.return_value = {
+            "id": "F", "name": "new.txt", "mimeType": "text/plain",
+            "parents": ["USERDRIVE"], "version": "2",
+        }
+        file.refresh()
+
+        # Derived state is dropped and recomputed: the file may have been
+        # renamed or moved since it was read.
+        assert file.name == "new.txt"
+        assert str(file.path) == "/My Drive/new.txt"
+        assert drive.get(id="F") is file
+
+    def test_the_cached_instance_is_the_one_that_moves(self):
+        # Refreshing mutates the `File` everything else is holding, rather than
+        # handing back a second object for the same id — which would leave two
+        # views of one file disagreeing.
+        drive, _resource, file = self._drive_with(9)
+        file.refresh()
+        assert drive.get(id="F") is file
+        assert drive.get(id="F").version == 9

@@ -50,6 +50,32 @@ file.is_document     # DocumentFile
 
 `__str__` returns the path; `__repr__` is `"ClassName(path)"`.
 
+## Version
+
+```python
+file.version           # int — server-side monotonic counter
+```
+
+**Free.** It is in `File.FIELDS`, so it arrives with every listing and every
+lookup — reading the version of all fifty files in a folder costs the one
+`files.list` you already paid for.
+
+It was extended metadata until that was measured, and the cost was not small:
+one `files.get(fields=*)` *per file*, so a caller polling a folder for changes
+paid seventy-eight extra requests to read the seventy-eight numbers it came for.
+`version` is the cheapest change signal Drive offers, which makes it exactly the
+wrong thing to charge per file for.
+
+It moves on **every** server-side change, including ones invisible to the user —
+a comment, a cursor parked in a cell, a metadata write. So it over-reports change
+and never under-reports it, which is the right way round for deciding whether to
+re-fetch something.
+
+The trade is freshness: it is as current as the fetch it arrived in. A `File`
+held across a write made elsewhere — through the Sheets API, or by a person —
+reports the version it was listed at. Use [`refresh()`](#refresh) when the answer
+has to be current as of *now*.
+
 ## Extended metadata
 
 The first time you access any of these, the wrapper does a `fields=*`
@@ -59,7 +85,6 @@ re-fetch (one round-trip) to populate them; subsequent reads are cached.
 file.size              # int — bytes; 0 for folders, shortcuts, Workspace docs
 file.created_time      # datetime.datetime
 file.modified_time     # datetime.datetime
-file.version           # int — server-side monotonic counter
 file.starred           # bool
 file.trashed           # bool — including via a trashed parent
 file.explicitly_trashed  # bool — only if directly trashed
@@ -72,6 +97,34 @@ don't re-fetch on every access.
 
 These methods live on `File` and apply to any file (including folders,
 unless noted).
+
+### `refresh()`
+
+```python
+file.refresh()         # one files.get(fields=*); nothing is returned
+```
+
+Re-reads the file's metadata from Drive, discarding what was cached. A `File` is
+cached by id for the life of a `DriveService` and its metadata is as old as the
+fetch it arrived in, so a file changed underneath you goes on reporting the name,
+parents and `version` it had then.
+
+The case it exists for is a write made through a **different service**: editing a
+spreadsheet through the Sheets API moves its Drive `version`, and the `File`
+listed beforehand cannot know that.
+
+```python
+file = drive.get("~/Logs/2026-09.gsheet")
+sheet.save()                       # written through Sheets
+file.refresh()
+file.version                       # now the post-write number
+```
+
+It fetches `fields=*`, so extended metadata comes back fresh in the same
+round-trip. Derived state — path, parent, shared-drive id — is dropped and
+recomputed, and the cache is re-keyed, since the file may have been renamed or
+moved since it was read. It mutates the instance everything else is holding
+rather than returning a second object for the same id.
 
 ### `rename(new_name)`
 

@@ -142,3 +142,13 @@ directly.
 - Extended properties (`size`, `created_time`, ...) trigger a `fields=*`
   re-fetch on first access per file. Bulk-listing a folder fetches only
   the small `FIELDS` set; the larger fetch is per-file and lazy.
+- `version` is **not** one of them — it is in `FIELDS`, so it arrives with
+  the listing. It was lazy until that was measured: reading the version of
+  every file in a folder was a `files.get` per file, which is the whole cost
+  of polling a folder for changes. Adding a field to `FIELDS` is free per
+  request; what does not belong there is anything a listing of a thousand
+  files should not be carrying.
+- A cached `File`'s metadata is as old as the fetch it arrived in. `refresh()`
+  re-reads it, which is what to reach for after a write made through another
+  service — a spreadsheet edited through Sheets moves its Drive `version`, and
+  the `File` cannot know that.

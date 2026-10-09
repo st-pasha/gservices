@@ -3,7 +3,7 @@ Layered JSON snapshot of a Google Sheets spreadsheet.
 
 The output is structured to mirror how a human reads a spreadsheet — data first,
 then merges, formulas, formats, borders, dimensions, and finally side-channel
-maps (notes, hyperlinks, computed values, developer metadata). `git diff` of
+maps (notes, hyperlinks, text runs, computed values, developer metadata). `git diff` of
 two snapshots highlights only the cells / properties that actually changed.
 
 Public API:
@@ -72,8 +72,20 @@ _SHEET_KEY_ORDER = (
     "columns",
     "notes",
     "hyperlinks",
+    "runs",
     "computed",
     "metadata",
+)
+
+_TEXT_FORMAT_KEY_ORDER = (
+    "fg",
+    "font_family",
+    "font_size",
+    "bold",
+    "italic",
+    "underline",
+    "strikethrough",
+    "link",
 )
 
 _SPREADSHEET_META_KEY_ORDER = (
@@ -119,6 +131,30 @@ class CellFormatSnapshot(TypedDict, total=False):
     italic: bool
     underline: bool
     strikethrough: bool
+
+
+class TextFormatSnapshot(TypedDict, total=False):
+    """
+    What one run of a cell's text sets for itself. Unlike `CellFormatSnapshot`
+    nothing is subtracted from a default, and an explicit `False` is kept: a
+    run's `strikethrough: false` is what un-strikes part of a struck cell.
+    """
+
+    fg: str
+    font_family: str
+    font_size: float
+    bold: bool
+    italic: bool
+    underline: bool
+    strikethrough: bool
+    link: str
+
+
+class TextRunSnapshot(TypedDict, total=False):
+    """One run of a cell's text: from index `at` to the next run's, or the end."""
+
+    at: int
+    fmt: TextFormatSnapshot
 
 
 class FormatEntrySnapshot(TypedDict):
@@ -192,6 +228,7 @@ class SheetSnapshot(TypedDict, total=False):
     columns: dict[str, ColMetaSnapshot]
     notes: dict[str, str]
     hyperlinks: dict[str, str]
+    runs: dict[str, list[TextRunSnapshot]]
     computed: dict[str, CellValueJSON]
     metadata: list[MetadataSnapshot]
 
@@ -361,6 +398,7 @@ def _build_sheet(
     ] = {}
     notes: dict[tuple[int, int], str] = {}
     hyperlinks: dict[tuple[int, int], str] = {}
+    runs: dict[tuple[int, int], list[TextRunSnapshot]] = {}
     computed: dict[tuple[int, int], CellValueJSON] = {}
 
     max_row_seen = 0
@@ -409,6 +447,11 @@ def _build_sheet(
             hyperlink = cv.get("hyperlink")
             if hyperlink:
                 hyperlinks[(ri, ci)] = hyperlink
+                has_content = True
+
+            text_runs = cv.get("textFormatRuns")
+            if text_runs:
+                runs[(ri, ci)] = _extract_text_runs(text_runs)
                 has_content = True
 
             if include_computed and (ri, ci) in formula_cells:
@@ -480,6 +523,8 @@ def _build_sheet(
         result["notes"] = _addr_dict(notes)
     if hyperlinks:
         result["hyperlinks"] = _addr_dict(hyperlinks)
+    if runs:
+        result["runs"] = _addr_dict(runs)
     if computed:
         result["computed"] = _addr_dict(computed)
 
@@ -800,6 +845,49 @@ def _extract_cell_format(
     )
 
 
+def _extract_text_runs(runs: list[gs.TextFormatRun]) -> list[TextRunSnapshot]:
+    """
+    A cell's `textFormatRuns`, as the snapshot keeps them.
+
+    The cell's own format, in `formats`, is what the API reports for the whole
+    cell, and a run overrides it for its stretch of the text. Read without the
+    runs, a cell struck through with its first lines un-struck reads as struck
+    all the way.
+    """
+    out: list[TextRunSnapshot] = []
+    for run in runs:
+        entry: TextRunSnapshot = {"at": run.get("startIndex", 0)}
+        fmt = _extract_text_format(run.get("format", {}))
+        if fmt:
+            entry["fmt"] = fmt
+        out.append(entry)
+    return out
+
+
+def _extract_text_format(tf: gs.TextFormat) -> TextFormatSnapshot:
+    """What a run's [tf] sets explicitly, `False` included."""
+    result: dict[str, Any] = {}
+    fg = color_object_to_string(tf.get("foregroundColorStyle"))
+    if fg:
+        result["fg"] = fg
+    if "fontFamily" in tf:
+        result["font_family"] = tf["fontFamily"]
+    if "fontSize" in tf:
+        result["font_size"] = tf["fontSize"]
+    if "bold" in tf:
+        result["bold"] = tf["bold"]
+    if "italic" in tf:
+        result["italic"] = tf["italic"]
+    if "underline" in tf:
+        result["underline"] = tf["underline"]
+    if "strikethrough" in tf:
+        result["strikethrough"] = tf["strikethrough"]
+    uri = tf.get("link", {}).get("uri")
+    if uri:
+        result["link"] = uri
+    return cast(TextFormatSnapshot, _order_keys(result, _TEXT_FORMAT_KEY_ORDER))
+
+
 def _number_format_string(nf: gs.NumberFormat | None) -> str | None:
     if nf is None:
         return None
@@ -1092,6 +1180,10 @@ def _wrap_sheet(sheet: SheetSnapshot) -> dict[str, Any]:
         out["rows"] = {k: _Inline(dict(v)) for k, v in out["rows"].items()}
     if "columns" in out:
         out["columns"] = {k: _Inline(dict(v)) for k, v in out["columns"].items()}
+    if "runs" in out:
+        out["runs"] = {
+            k: _Inline([dict(run) for run in v]) for k, v in out["runs"].items()
+        }
     if "metadata" in out:
         out["metadata"] = [_Inline(dict(m)) for m in out["metadata"]]
     return out

@@ -35,7 +35,13 @@ _LOCK_MARKER = "gservices-lock:"
 
 def _cell_fields(include_computed: bool) -> str:
     """The `CellData` sub-fields a grid fetch asks for, as a `fields=` list."""
-    fields = ["userEnteredValue", "effectiveFormat", "note", "hyperlink"]
+    fields = [
+        "userEnteredValue",
+        "effectiveFormat",
+        "textFormatRuns",
+        "note",
+        "hyperlink",
+    ]
     if include_computed:
         fields.insert(1, "effectiveValue")
     return ",".join(fields)

@@ -294,7 +294,8 @@ class TestBatchLoad:
         # Things the snapshot doesn't read should be absent from the mask.
         assert "formattedValue" not in fields
         assert "userEnteredFormat" not in fields
-        assert "textFormatRuns" not in fields
+        # A cell's text runs override its format for part of its text.
+        assert "textFormatRuns" in fields
 
     def test_fields_mask_includes_effective_value_when_computed_requested(self):
         from gservices.sheets.spreadsheet import Spreadsheet
@@ -536,6 +537,52 @@ class TestSideChannels:
     def test_hyperlinks(self, rich_spreadsheet: Spreadsheet):
         snap = rich_spreadsheet.snapshot()
         assert snap["sheets"][0].get("hyperlinks") == {"A2": "#gid=999"}
+
+    def test_no_runs_when_none(self, rich_spreadsheet: Spreadsheet):
+        snap = rich_spreadsheet.snapshot()
+        assert "runs" not in snap["sheets"][0]
+
+    def test_runs_unstrike_part_of_a_struck_cell(self):
+        # A delivery log's description: the cell is struck, and its first line
+        # un-struck by a run — what the cell's format alone reads as struck.
+        data = _minimal_data()
+        cell = _cell(data, 0, 1, 0)
+        cell["userEnteredValue"] = {"stringValue": "UPGRADE\nold item"}
+        cell["effectiveFormat"] = {
+            "textFormat": {**_arial_10(), "strikethrough": True}
+        }
+        cell["textFormatRuns"] = [
+            {"format": {"strikethrough": False}},
+            {"startIndex": 7, "format": {}},
+        ]
+
+        sheet = _make_spreadsheet(data).snapshot()["sheets"][0]
+
+        assert sheet.get("runs") == {
+            "A2": [{"at": 0, "fmt": {"strikethrough": False}}, {"at": 7}]
+        }
+        # The cell's own format is still the cell's.
+        assert {"range": "A2", "fmt": {"strikethrough": True}} in sheet.get(
+            "formats", []
+        )
+
+    def test_runs_written_one_cell_per_line(self):
+        data = _minimal_data()
+        cell = _cell(data, 0, 1, 0)
+        cell["textFormatRuns"] = [
+            {"format": {"bold": True}},
+            {"startIndex": 2, "format": {"link": {"uri": "https://x.test"}}},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snap.json"
+            _make_spreadsheet(data).save_snapshot(str(path))
+            text = path.read_text()
+
+        assert (
+            '"A2": [{"at": 0, "fmt": {"bold": true}}, '
+            '{"at": 2, "fmt": {"link": "https://x.test"}}]'
+        ) in text
 
 
 class TestComputed:

@@ -27,6 +27,7 @@ from gservices.sheets.snapshot import (
     _emit,
     _encode_cell_value,
     _extract_cell_format,
+    _extract_text_runs,
     _Inline,
     _number_format_string,
     _order_keys,
@@ -360,6 +361,47 @@ class TestExtractCellFormat:
         default: gs.CellFormat = {}
         result = _extract_cell_format(fmt, _DefaultFormat(default))
         assert result.get("padding") == [1, 2, 3, 4]
+
+
+# ----------------------------------------------------------------------------
+# _extract_text_runs
+# ----------------------------------------------------------------------------
+
+class TestExtractTextRuns:
+    def test_first_run_starts_at_zero(self):
+        runs: list[gs.TextFormatRun] = [{"format": {"bold": True}}]
+        assert _extract_text_runs(runs) == [{"at": 0, "fmt": {"bold": True}}]
+
+    def test_explicit_false_is_kept(self):
+        # A run's `false` overrides the cell's `true`, so it is information.
+        runs: list[gs.TextFormatRun] = [
+            {"format": {"strikethrough": False}},
+            {"startIndex": 43, "format": {}},
+        ]
+        assert _extract_text_runs(runs) == [
+            {"at": 0, "fmt": {"strikethrough": False}},
+            {"at": 43},
+        ]
+
+    def test_fonts_colors_and_links(self):
+        runs: list[gs.TextFormatRun] = [
+            {
+                "startIndex": 3,
+                "format": {
+                    "link": {"uri": "https://example.com"},
+                    "italic": True,
+                    "fontSize": 12,
+                    "fontFamily": "Roboto",
+                    "foregroundColorStyle": {"rgbColor": {"red": 1.0}},
+                },
+            }
+        ]
+        [run] = _extract_text_runs(runs)
+        fmt = run.get("fmt", {})
+        assert run.get("at") == 3
+        assert list(fmt) == ["fg", "font_family", "font_size", "italic", "link"]
+        assert fmt.get("link") == "https://example.com"
+        assert fmt.get("fg", "").startswith("#ff")
 
 
 # ----------------------------------------------------------------------------

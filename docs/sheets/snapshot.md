@@ -76,7 +76,8 @@ their own lines, borders grouped by line segment — all designed to make
       "rows":    {"0": {"height": 32}},
       "columns": {"A": {"width": 180}},
       "notes":   {"C2": "Cancelled"},
-      "hyperlinks": {"A4": "#gid=1138"}
+      "hyperlinks": {"A4": "#gid=1138"},
+      "runs":    {"A3": [{"at": 0, "fmt": {"strikethrough": false}}, {"at": 7}]}
     }
   ]
 }
@@ -92,7 +93,7 @@ The layers, in order:
 | 2 | `formats` | Format-keyed groups: `{range, fmt}` entries |
 | 3 | `borders` | Horizontal/vertical line segments |
 | 4 | `rows`, `columns` | Per-dimension overrides (height, width, hidden, metadata) |
-| 5 | `notes`, `hyperlinks`, `computed` | Sparse per-cell side maps |
+| 5 | `notes`, `hyperlinks`, `runs`, `computed` | Sparse per-cell side maps |
 | 6 | `metadata`, `protected_ranges` | Developer metadata, protections |
 
 ## Value encoding
@@ -155,6 +156,31 @@ Same compaction is used for `formulas` (one A1 range list marking which
 data entries are formulas). For a typical column of identical-shape
 formulas, this collapses to one entry like `"B2:B100"` — diffs stay
 single-line even when 99 formula cells exist.
+
+## Text runs
+
+A cell's text can be formatted in parts — a word in bold, a link in the middle
+of a sentence, the first line of a struck-through cell un-struck. The cell's
+own format goes in `formats` as usual, and the parts go in `runs`, a sparse map
+from the cell's address to its runs in order:
+
+```json
+"runs": {
+  "C59": [{"at": 0, "fmt": {"strikethrough": false}}, {"at": 43}]
+}
+```
+
+A run covers the text from its `at` (a character index) to the next run's, or
+to the end. Its `fmt` holds only what the run sets for itself — `fg`,
+`font_family`, `font_size`, `bold`, `italic`, `underline`, `strikethrough` and
+`link` — and anything it leaves out is the cell's. **An explicit `false` is
+kept**, unlike in `formats`, which subtracts the spreadsheet default: it is
+what un-strikes part of a struck cell. Above, the cell is struck in `formats`,
+its first 43 characters are not, and the rest is.
+
+Read without `runs`, that cell reads as struck all the way through, so a reader
+that acts on a format — a struck row read as cancelled — should resolve each
+run against the cell's format before deciding.
 
 ## Borders
 

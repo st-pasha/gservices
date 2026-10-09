@@ -152,8 +152,9 @@ See [spreadsheet.md](spreadsheet.md) for `save()` semantics.
 - **Embedded images** — both in-cell (`IMAGE()` and pasted) and
   over-the-grid images
 - **Rich text within a cell** — multiple fonts, colors, or links within
-  the same cell (`textFormatRuns` is read but only the cell-level format
-  is preserved)
+  the same cell. A snapshot keeps them (`runs`, see
+  [snapshot.md](snapshot.md#text-runs)), but a `Cell` exposes only its
+  cell-level format, and nothing writes a run
 - **Bulk range I/O** — `values.batchGet`, `values.batchUpdate`, and
   `values.append` aren't wrapped; each `cell.value = ...` queues its own
   `updateCells` request, so writing 1000 distinct cells is 1000 queued

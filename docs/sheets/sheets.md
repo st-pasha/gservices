@@ -112,7 +112,7 @@ row.next_row         # Row | None
 row[col]             # Cell at (row.index, col)
 len(row)             # column_count
 
-row.remove()         # delete this row; queues a deleteRange request
+row.remove()         # delete this row, metadata and all; queues a deleteDimension request
 row.move(before=other_row)  # or after=, or index=
 ```
 

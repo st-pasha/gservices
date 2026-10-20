@@ -49,18 +49,21 @@ class Column(Dimension):
         """
         Deletes the column and all its data from the sheet. All remaining columns
         will be moved left. The Column object will become unusable after this call.
+
+        A `deleteDimension`, so the column's width and developer metadata go
+        with it; see `Row.remove`.
         """
         sheet = self._sheet
         index = self._index
-        request: gs.DeleteRangeRequest = {
-            "shiftDimension": "COLUMNS",
+        request: gs.DeleteDimensionRequest = {
             "range": {
                 "sheetId": sheet.id,
-                "startColumnIndex": index,
-                "endColumnIndex": index + 1,
+                "dimension": "COLUMNS",
+                "startIndex": index,
+                "endIndex": index + 1,
             },
         }
-        sheet._spreadsheet._add_request({"deleteRange": request})
+        sheet._spreadsheet._add_request({"deleteDimension": request})
         sheet._handle_column_removed(index)
         sheet.columns._handle_column_removed(index)
         self._index = -1

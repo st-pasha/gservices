@@ -471,6 +471,12 @@ class Sheet:
             remove_keys = [key for key in cell_cache if key[0] == removed_row_index]
             for key in remove_keys:
                 del cell_cache[key]
+            # The rows below move up, and a cached cell must move with its row or
+            # a later write to it lands on the row underneath.
+            for key in sorted(k for k in cell_cache if k[0] > removed_row_index):
+                cell = cell_cache.pop(key)
+                cell._row -= 1
+                cell_cache[(key[0] - 1, key[1])] = cell
 
     def _handle_row_inserted(self, inserted_index: int) -> None:
         if self._cell_values is not None:
@@ -548,6 +554,10 @@ class Sheet:
         remove_keys = [key for key in self._cell_cache if key[1] == removed_column_index]
         for key in remove_keys:
             del self._cell_cache[key]
+        for key in sorted(k for k in self._cell_cache if k[1] > removed_column_index):
+            cell = self._cell_cache.pop(key)
+            cell._column -= 1
+            self._cell_cache[(key[0], key[1] - 1)] = cell
 
     def _handle_column_moved(self, old_index: int, new_index: int) -> None:
         if cell_data := self._cell_data:

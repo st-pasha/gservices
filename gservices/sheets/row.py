@@ -54,18 +54,24 @@ class Row(Dimension):
         """
         Deletes the row and all its data from the sheet. All remaining rows will be
         moved up. The Row object will become unusable after this call.
+
+        The row itself goes — its cells, its height, and the developer metadata
+        anchored to it — as a `deleteDimension`. A `deleteRange` would shift only
+        the cells up and leave every row's metadata where it was, so each row
+        below would end up carrying the metadata of the row that used to be
+        above it.
         """
         sheet = self._sheet
         index = self._index
-        request: gs.DeleteRangeRequest = {
-            "shiftDimension": "ROWS",
+        request: gs.DeleteDimensionRequest = {
             "range": {
                 "sheetId": sheet.id,
-                "startRowIndex": index,
-                "endRowIndex": index + 1,
+                "dimension": "ROWS",
+                "startIndex": index,
+                "endIndex": index + 1,
             },
         }
-        sheet._spreadsheet._add_request({"deleteRange": request})
+        sheet._spreadsheet._add_request({"deleteDimension": request})
         sheet._handle_row_removed(index)
         sheet.rows._handle_row_removed(index)
         self._index = -1

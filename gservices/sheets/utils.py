@@ -170,49 +170,36 @@ def merge_requests(request0: gs.Request, request1: gs.Request) -> bool:
     If successful, returns `True` and modifies [request0] to incorporate data from
     [request1]. Returns `False` if merge is not possible.
     """
-    return merge_delete_range(
-        request0.get("deleteRange"), request1.get("deleteRange")
+    return merge_delete_dimension(
+        request0.get("deleteDimension"), request1.get("deleteDimension")
     ) or merge_update_cells(request0.get("updateCells"), request1.get("updateCells"))
 
 
-def merge_delete_range(
-    req0: gs.DeleteRangeRequest | None,
-    req1: gs.DeleteRangeRequest | None,
+def merge_delete_dimension(
+    req0: gs.DeleteDimensionRequest | None,
+    req1: gs.DeleteDimensionRequest | None,
 ) -> bool:
     # When rows are deleted, all subsequent rows move up, which means two consecutive
     # delete operations can be merged if their starting row is the same.
     if req0 and req1:
-        if req0.get("shiftDimension") != req1.get("shiftDimension"):
-            return False
         range0 = req0.get("range", {})
         range1 = req1.get("range", {})
         if range0.get("sheetId") != range1.get("sheetId"):
             return False
-        range0_row0 = range0.get("startRowIndex")
-        range0_row1 = range0.get("endRowIndex")
-        range1_row0 = range1.get("startRowIndex")
-        range1_row1 = range1.get("endRowIndex")
-        range0_col0 = range0.get("startColumnIndex")
-        range0_col1 = range0.get("endColumnIndex")
-        range1_col0 = range1.get("startColumnIndex")
-        range1_col1 = range1.get("endColumnIndex")
+        if range0.get("dimension") != range1.get("dimension"):
+            return False
+        start0 = range0.get("startIndex")
+        end0 = range0.get("endIndex")
+        start1 = range1.get("startIndex")
+        end1 = range1.get("endIndex")
         if (
-            range0_row0 is not None
-            and range0_row1 is not None
-            and range1_row0 is not None
-            and range1_row1 is not None
-            and range0_row0 == range1_row0
+            start0 is not None
+            and end0 is not None
+            and start1 is not None
+            and end1 is not None
+            and start0 == start1
         ):
-            range0["endRowIndex"] = range0_row1 + (range1_row1 - range1_row0)
-            return True
-        if (
-            range0_col0 is not None
-            and range0_col1 is not None
-            and range1_col0 is not None
-            and range1_col1 is not None
-            and range0_col0 == range1_col0
-        ):
-            range0["endColumnIndex"] = range0_col1 + (range1_col1 - range1_col0)
+            range0["endIndex"] = end0 + (end1 - start1)
             return True
     return False
 

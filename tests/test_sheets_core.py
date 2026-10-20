@@ -877,6 +877,106 @@ class TestRowRemoveSentinel:
 
 
 # ----------------------------------------------------------------------------
+# Row.remove() / Column.remove() — what reaches the API
+# ----------------------------------------------------------------------------
+
+class TestRemoveDeletesTheDimension:
+    """`remove()` deletes the row (or column) itself. It used to send a
+    `deleteRange`, which shifts only the cells: each row's developer metadata
+    stayed put, so every row below the removed one came out carrying the
+    metadata of the row above it."""
+
+    def test_row_remove_sends_delete_dimension(self):
+        data = _sheet_data(row_data=[_row("a"), _row("b"), _row("c")], sheet_id=7)
+        ss = _make_spreadsheet(data)
+        ss.sheets[0].rows[1].remove()
+        assert ss._pending_updates == [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": 7,
+                        "dimension": "ROWS",
+                        "startIndex": 1,
+                        "endIndex": 2,
+                    }
+                }
+            }
+        ]
+
+    def test_column_remove_sends_delete_dimension(self):
+        data = _sheet_data(row_data=[_row("a", "b", "c")], sheet_id=7)
+        ss = _make_spreadsheet(data)
+        ss.sheets[0].columns[2].remove()
+        assert ss._pending_updates == [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": 7,
+                        "dimension": "COLUMNS",
+                        "startIndex": 2,
+                        "endIndex": 3,
+                    }
+                }
+            }
+        ]
+
+    def test_removing_adjacent_rows_merges_into_one_request(self):
+        data = _sheet_data(row_data=[_row("a"), _row("b"), _row("c"), _row("d")])
+        ss = _make_spreadsheet(data)
+        rows = ss.sheets[0].rows
+        rows[1].remove()
+        rows[1].remove()
+        assert ss._pending_updates == [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": 0,
+                        "dimension": "ROWS",
+                        "startIndex": 1,
+                        "endIndex": 3,
+                    }
+                }
+            }
+        ]
+
+    def test_a_row_and_a_column_at_one_index_do_not_merge(self):
+        data = _sheet_data(row_data=[_row("a", "b"), _row("c", "d")])
+        ss = _make_spreadsheet(data)
+        ss.sheets[0].rows[1].remove()
+        ss.sheets[0].columns[1].remove()
+        assert len(ss._pending_updates) == 2
+
+    def test_the_removed_rows_metadata_goes_with_it(self):
+        data = _sheet_data(
+            row_data=[_row("a"), _row("b"), _row("c")],
+            row_meta=[
+                {"developerMetadata": [{"metadataKey": "id", "metadataValue": k}]}
+                for k in ("A", "B", "C")
+            ],
+        )
+        sheet = _make_spreadsheet(data).sheets[0]
+        sheet.rows[0].remove()
+        assert [sheet.rows[i].metadata[0].value for i in range(2)] == ["B", "C"]
+        assert sheet.cell(0, 0).user_entered_value == "b"
+
+    def test_a_cached_cell_below_moves_up_with_its_row(self):
+        data = _sheet_data(row_data=[_row("a", "x"), _row("b", "y"), _row("c", "z")])
+        sheet = _make_spreadsheet(data).sheets[0]
+        below = sheet.cell(2, 1)
+        sheet.rows[0].remove()
+        assert (below.row, below.column) == (1, 1)
+        assert sheet.cell(1, 1) is below
+
+    def test_a_cached_cell_to_the_right_moves_left_with_its_column(self):
+        data = _sheet_data(row_data=[_row("a", "b", "c")])
+        sheet = _make_spreadsheet(data).sheets[0]
+        right = sheet.cell(0, 2)
+        sheet.columns[0].remove()
+        assert (right.row, right.column) == (0, 1)
+        assert sheet.cell(0, 1) is right
+
+
+# ----------------------------------------------------------------------------
 # Spreadsheet.save(check_version=True) — concurrent-edit detection
 # ----------------------------------------------------------------------------
 
